@@ -124,7 +124,10 @@
             Clock,
             Package,
             ChevronRight,
-            Box
+            Box,
+            FolderTree,
+            List,
+            Activity
         } from 'lucide-react';
 
         // --- 1. Inventory Realtime Database Configuration ---
@@ -264,6 +267,9 @@
             const [activeTab, setActiveTab] = useState('dashboard');
             const [items, setItems] = useState([]);
             const [requests, setRequests] = useState([]); 
+            // New State for Total Data from /inventory path
+            const [totalData, setTotalData] = useState([]);
+            
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState('');
             const [notification, setNotification] = useState(null);
@@ -301,6 +307,7 @@
 
             // Realtime Database Listeners (Inventory)
             useEffect(() => {
+                // 1. inventory_items
                 const itemsRef = ref(db, 'inventory_items');
                 const unsubItems = onValue(itemsRef, (snapshot) => {
                     const data = snapshot.val();
@@ -318,6 +325,7 @@
                     setLoading(false);
                 });
 
+                // 2. inventory_requests
                 const reqRef = ref(db, 'inventory_requests');
                 const unsubReq = onValue(reqRef, (snapshot) => {
                     const data = snapshot.val();
@@ -331,9 +339,25 @@
                     setRequests(loadedReqs);
                 });
 
+                // 3. /inventory (Total Data)
+                const totalDataRef = ref(db, 'inventory');
+                const unsubTotal = onValue(totalDataRef, (snapshot) => {
+                    const data = snapshot.val();
+                    const loadedTotal = [];
+                    if (data) {
+                        for (const key in data) {
+                            loadedTotal.push({ id: key, ...data[key] });
+                        }
+                    }
+                    // Sort by latest
+                    loadedTotal.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    setTotalData(loadedTotal);
+                });
+
                 return () => {
                     unsubItems();
                     unsubReq();
+                    unsubTotal();
                 };
             }, []);
 
@@ -760,6 +784,49 @@
                                 <div className="text-center py-10 text-gray-400">
                                     <Trash2 size={40} className="mx-auto mb-2 opacity-20"/>
                                     <p>គ្មានទិន្នន័យក្នុងធុងសំរាម</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            // --- NEW: Total Data View (From /inventory path) ---
+            const TotalDataView = () => {
+                return (
+                    <div className="animate-fadeIn pb-20">
+                        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                            <List size={24} className="text-blue-600"/>
+                            ទិន្នន័យសរុប (ពី /inventory)
+                        </h2>
+                        
+                        <div className="space-y-3">
+                            {totalData.map(data => (
+                                <div key={data.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <h3 className="font-bold text-gray-800 text-lg">{data.type || 'N/A'}</h3>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                បង្កើតដោយ: {data.createdBy || 'N/A'} <br/>
+                                                កាលបរិច្ឆេទ: {data.lastUpdatedDate || 'N/A'}
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-lg font-bold text-sm inline-block">
+                                                {data.quantity || 0}
+                                            </div>
+                                            <div className={`mt-2 text-xs font-medium px-2 py-0.5 rounded ${data.status === 'កំពុងប្រើប្រាស់' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                {data.status || 'N/A'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {totalData.length === 0 && (
+                                <div className="text-center py-20 text-gray-400 flex flex-col items-center">
+                                    <Activity size={48} strokeWidth={1} className="mb-4 opacity-50"/>
+                                    <p>មិនមានទិន្នន័យក្នុង /inventory</p>
                                 </div>
                             )}
                         </div>
@@ -1682,29 +1749,28 @@
                         {activeTab === 'operations' && <OperationsView />}
                         {activeTab === 'history' && <HistoryView />}
                         {activeTab === 'settings' && <SettingsView />}
+                        {activeTab === 'total_data' && <TotalDataView />}
                     </main>
 
                     {/* Bottom Navigation */}
                     <div className="fixed bottom-0 w-full bg-white border-t border-gray-200 shadow-lg flex justify-around py-2 z-40 max-w-md left-1/2 transform -translate-x-1/2 no-print">
-                        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 p-1 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
-                            <LayoutDashboard size={20} />
-                            <span className="text-[10px] font-medium">ផ្ទាំងគ្រប់គ្រង</span>
+                        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ផ្ទាំងគ្រប់គ្រង">
+                            <LayoutDashboard size={24} />
                         </button>
-                        <button onClick={() => setActiveTab('operations')} className={`flex flex-col items-center gap-1 p-1 rounded-lg transition-colors ${activeTab === 'operations' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
-                            <Edit size={20} />
-                            <span className="text-[10px] font-medium">ប្រតិបត្តិការ</span>
+                        <button onClick={() => setActiveTab('operations')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'operations' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ប្រតិបត្តិការ">
+                            <Edit size={24} />
                         </button>
-                        <button onClick={() => setActiveTab('inventory')} className={`flex flex-col items-center gap-1 p-1 rounded-lg transition-colors ${activeTab === 'inventory' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
-                            <PackagePlus size={20} />
-                            <span className="text-[10px] font-medium">ស្តុក</span>
+                        <button onClick={() => setActiveTab('inventory')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'inventory' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ស្តុក">
+                            <PackagePlus size={24} />
                         </button>
-                        <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 p-1 rounded-lg transition-colors ${activeTab === 'history' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
-                            <History size={20} />
-                            <span className="text-[10px] font-medium">ប្រវត្តិ</span>
+                        <button onClick={() => setActiveTab('total_data')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'total_data' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ទិន្នន័យសរុប">
+                            <List size={24} />
                         </button>
-                        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 p-1 rounded-lg transition-colors ${activeTab === 'settings' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
-                            <Settings size={20} />
-                            <span className="text-[10px] font-medium">ការកំណត់</span>
+                        <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'history' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ប្រវត្តិ">
+                            <History size={24} />
+                        </button>
+                        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'settings' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`} title="ការកំណត់">
+                            <Settings size={24} />
                         </button>
                     </div>
                 </div>
