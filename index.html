@@ -11,8 +11,8 @@
     <!-- Load Babel for JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Load SheetJS for Excel Export -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <!-- Load SheetJS for Excel Export (Stable Version) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <!-- Load html2pdf.js for Direct PDF Download -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -128,7 +128,9 @@
             FolderTree,
             List,
             Activity,
-            MapPin
+            MapPin,
+            Plus,
+            Minus
         } from 'lucide-react';
 
         // --- 1. Inventory Realtime Database Configuration ---
@@ -359,6 +361,7 @@
                             loadedTotal.push({ id: key, ...data[key] });
                         }
                     }
+                    // Sort by latest
                     loadedTotal.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                     setTotalData(loadedTotal);
                 });
@@ -398,39 +401,61 @@
                 }
             };
 
-            const handleStockOut = async (e, formData, resetForm) => {
-                e.preventDefault();
-                const item = items.find(i => i.id === formData.itemId);
-                if (!item) return;
-
-                const qty = parseInt(formData.quantity);
-                if (item.quantity < qty) {
-                showNotification('ចំនួនក្នុងស្តុកមិនគ្រាប់គ្រាន់!', 'error');
-                return;
-                }
-
+            // --- UPDATED: Handle Multi-Item Stock Out with Multi-Source ---
+            const handleStockOut = async (cartItems, requesterName, reason, resetForm) => {
                 try {
-                await update(ref(db, `inventory_items/${item.id}`), {
-                    quantity: item.quantity - qty,
-                    lastUpdated: new Date().toISOString()
-                });
-                
-                const newReqRef = push(ref(db, 'inventory_requests'));
-                await set(newReqRef, {
-                    type: 'DIRECT_OUT',
-                    itemId: item.id,
-                    itemName: item.name,
-                    category: item.category,
-                    quantity: qty,
-                    reason: formData.reason,
-                    date: new Date().toISOString(),
-                    status: 'COMPLETED'
-                });
+                    const timestamp = new Date().toISOString();
+                    
+                    for (const cartItem of cartItems) {
+                        const isGlobal = cartItem.source === 'inventory';
+                        const path = isGlobal ? 'inventory' : 'inventory_items';
+                        const itemRef = ref(db, `${path}/${cartItem.id}`);
+                        
+                        // Fetch current quantity from local state to calculate new qty
+                        const currentItem = isGlobal 
+                            ? totalData.find(i => i.id === cartItem.id)
+                            : items.find(i => i.id === cartItem.id);
+                        
+                        if (!currentItem) continue;
 
-                showNotification('បានដកសម្ភារៈចេញដោយជោគជ័យ!', 'success');
-                resetForm();
+                        const newQty = currentItem.quantity - parseInt(cartItem.outQty);
+
+                        if (isGlobal) {
+                            // For /inventory schema
+                            await update(itemRef, {
+                                quantity: newQty,
+                                lastUpdatedDate: new Date().toLocaleString('en-GB'),
+                                updatedAt: Date.now()
+                            });
+                        } else {
+                            // For inventory_items schema
+                            await update(itemRef, {
+                                quantity: newQty,
+                                lastUpdated: timestamp
+                            });
+                        }
+
+                        // Create Request Log
+                        const newReqRef = push(ref(db, 'inventory_requests'));
+                        await set(newReqRef, {
+                            type: 'DIRECT_OUT',
+                            itemId: cartItem.id,
+                            itemName: cartItem.name, // Will be name or type
+                            category: cartItem.category || 'N/A',
+                            quantity: parseInt(cartItem.outQty),
+                            reason: reason,
+                            requester: requesterName,
+                            date: timestamp,
+                            status: 'COMPLETED',
+                            source: path
+                        });
+                    }
+
+                    showNotification('បានដកសម្ភារៈចេញដោយជោគជ័យ!', 'success');
+                    resetForm();
                 } catch (error) {
-                showNotification('មានបញ្ហាពេលដកចេញ', 'error');
+                    console.error(error);
+                    showNotification('មានបញ្ហាពេលដកចេញ', 'error');
                 }
             };
 
@@ -487,13 +512,16 @@
                     type: 'danger',
                     onConfirm: async () => {
                         try {
+                            // Get current Data
                             const itemSnapshot = await get(ref(db, `inventory_items/${id}`));
                             if(itemSnapshot.exists()) {
                                 const itemData = itemSnapshot.val();
+                                // Move to Recycle Bin
                                 await set(ref(db, `recycle_bin/items/${id}`), {
                                     ...itemData,
                                     deletedAt: new Date().toISOString()
                                 });
+                                // Remove from active
                                 await remove(ref(db, `inventory_items/${id}`));
                                 showNotification('បានផ្លាស់ទីទៅធុងសំរាម', 'success');
                             }
@@ -546,6 +574,7 @@
                                 });
                             }
 
+                            // Move to Recycle Bin
                             await set(ref(db, `recycle_bin/requests/${historyItem.id}`), {
                                 ...historyItem,
                                 deletedAt: new Date().toISOString()
@@ -591,7 +620,7 @@
                     quantity: newQty,
                     reason: editingHistory.reason,
                     requester: editingHistory.requester || '',
-                    date: editingHistory.date
+                    date: editingHistory.date 
                 });
 
                 showNotification('កែប្រែប្រវត្តិជោគជ័យ!', 'success');
@@ -602,7 +631,7 @@
                 }
             };
 
-            // --- Settings View (Updated Delete Logic) ---
+            // --- Settings View ---
             const SettingsView = () => {
                 const [recycleTab, setRecycleTab] = useState('items');
                 const [deletedItems, setDeletedItems] = useState([]);
@@ -618,21 +647,25 @@
                         const now = Date.now();
 
                         if (data) {
+                            // Process Items
                             if (data.items) {
                                 for (const key in data.items) {
                                     const item = { id: key, ...data.items[key] };
+                                    // Check 60 days
                                     if (item.deletedAt && (now - new Date(item.deletedAt).getTime() > SIXTY_DAYS_MS)) {
-                                        remove(ref(db, `recycle_bin/items/${key}`)); 
+                                        remove(ref(db, `recycle_bin/items/${key}`)); // Auto delete
                                     } else {
                                         dItems.push(item);
                                     }
                                 }
                             }
+                            // Process Requests
                             if (data.requests) {
                                 for (const key in data.requests) {
                                     const req = { id: key, ...data.requests[key] };
+                                    // Check 60 days
                                     if (req.deletedAt && (now - new Date(req.deletedAt).getTime() > SIXTY_DAYS_MS)) {
-                                        remove(ref(db, `recycle_bin/requests/${key}`));
+                                        remove(ref(db, `recycle_bin/requests/${key}`)); // Auto delete
                                     } else {
                                         dReqs.push(req);
                                     }
@@ -647,8 +680,10 @@
 
                 const handleRestoreItem = async (item) => {
                     try {
-                        const { deletedAt, ...restData } = item; 
+                        // Restore to inventory_items
+                        const { deletedAt, ...restData } = item; // Remove deletedAt
                         await set(ref(db, `inventory_items/${item.id}`), restData);
+                        // Remove from recycle bin
                         await remove(ref(db, `recycle_bin/items/${item.id}`));
                         showNotification('បានស្តារសម្ភារៈឡើងវិញ', 'success');
                     } catch (e) {
@@ -659,16 +694,20 @@
 
                 const handleRestoreRequest = async (req) => {
                     try {
+                        // Check if item exists to deduct stock again
                         const itemSnapshot = await get(ref(db, `inventory_items/${req.itemId}`));
                         if (itemSnapshot.exists()) {
                             const currentItem = itemSnapshot.val();
                             if (currentItem.quantity >= req.quantity) {
+                                // Re-deduct stock
                                 await update(ref(db, `inventory_items/${req.itemId}`), {
                                     quantity: currentItem.quantity - req.quantity,
                                     lastUpdated: new Date().toISOString()
                                 });
+                                // Restore Request
                                 const { deletedAt, ...restData } = req;
                                 await set(ref(db, `inventory_requests/${req.id}`), restData);
+                                // Remove from recycle bin
                                 await remove(ref(db, `recycle_bin/requests/${req.id}`));
                                 showNotification('បានស្តារសំណើ និងកាត់ស្តុកវិញជោគជ័យ', 'success');
                             } else {
@@ -683,7 +722,6 @@
                     }
                 };
 
-                // UPDATED: handlePermanentDelete to use Custom Modal
                 const handlePermanentDelete = (path, id) => {
                     setConfirmModal({
                         isOpen: true,
@@ -799,7 +837,7 @@
                 );
             };
 
-            // --- NEW: Total Data View (From /inventory path) ---
+            // --- Total Data View (From /inventory path) ---
             const TotalDataView = () => {
                 return (
                     <div className="animate-fadeIn pb-20">
@@ -919,19 +957,19 @@
                             'មូលហេតុ': item.reason
                         }));
 
-                        // Use window.XLSX to ensure global access
-                        if (!window.XLSX) {
-                            alert("កំពុងដំណើរការ Library សូមព្យាយាមម្តងទៀត!");
-                            return;
+                        // Check for library
+                        if (typeof XLSX === 'undefined') {
+                             alert("កំពុងដំណើរការ Library សូមព្យាយាមម្តងទៀត!");
+                             return;
                         }
 
-                        const wb = window.XLSX.utils.book_new();
-                        const ws = window.XLSX.utils.json_to_sheet(dataToExport);
+                        const wb = XLSX.utils.book_new();
+                        const ws = XLSX.utils.json_to_sheet(dataToExport);
                         
                         // Use a safe sheet name to avoid "History" reserved word error
-                        window.XLSX.utils.book_append_sheet(wb, ws, "Inventory_Data");
+                        XLSX.utils.book_append_sheet(wb, ws, "Inventory_Data");
                         
-                        window.XLSX.writeFile(wb, `Inventory_History_${new Date().toISOString().slice(0,10)}.xlsx`);
+                        XLSX.writeFile(wb, `Inventory_History_${new Date().toISOString().slice(0,10)}.xlsx`);
                     } catch (error) {
                         console.error("Excel Export Error:", error);
                         alert("មានបញ្ហាក្នុងការ Export Excel។ សូមមើល Console សម្រាប់ព័ត៌មានបន្ថែម។");
@@ -1048,9 +1086,13 @@
                     };
 
                     // Execute PDF generation
-                    window.html2pdf().set(opt).from(element).save().then(() => {
+                    html2pdf().set(opt).from(element).save().then(() => {
                         setIsGeneratingPDF(false);
                         showNotification("បានទាញយក PDF ជោគជ័យ!", "success");
+                    }).catch(err => {
+                         console.error(err);
+                         setIsGeneratingPDF(false);
+                         alert("Error PDF: " + err.message);
                     });
                 };
 
@@ -1312,15 +1354,15 @@
                             'បរិយាយ': item.description
                         }));
 
-                        if (!window.XLSX) {
+                        if (typeof XLSX === 'undefined') {
                             alert("កំពុងដំណើរការ Library សូមព្យាយាមម្តងទៀត!");
                             return;
                         }
 
-                        const wb = window.XLSX.utils.book_new();
-                        const ws = window.XLSX.utils.json_to_sheet(dataToExport);
-                        window.XLSX.utils.book_append_sheet(wb, ws, "Inventory_List");
-                        window.XLSX.writeFile(wb, `Inventory_List_${new Date().toISOString().slice(0,10)}.xlsx`);
+                        const wb = XLSX.utils.book_new();
+                        const ws = XLSX.utils.json_to_sheet(dataToExport);
+                        XLSX.utils.book_append_sheet(wb, ws, "Inventory_List");
+                        XLSX.writeFile(wb, `Inventory_List_${new Date().toISOString().slice(0,10)}.xlsx`);
                     } catch (error) {
                         console.error("Excel Export Error:", error);
                         alert("មានបញ្ហាក្នុងការ Export Excel");
@@ -1432,9 +1474,13 @@
                         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                     };
 
-                    window.html2pdf().set(opt).from(element).save().then(() => {
+                    html2pdf().set(opt).from(element).save().then(() => {
                         setIsGeneratingPDF(false);
                         showNotification("បានទាញយក PDF ជោគជ័យ!", "success");
+                    }).catch(err => {
+                         console.error(err);
+                         setIsGeneratingPDF(false);
+                         alert("Error PDF: " + err.message);
                     });
                 };
 
@@ -1652,6 +1698,11 @@
                     itemId: '', reason: '', requester: '', itemName: ''
                 });
                 
+                const [stockOutCart, setStockOutCart] = useState([]);
+                const [currentStockOut, setCurrentStockOut] = useState({ itemId: '', quantity: '' });
+                const [requesterName, setRequesterName] = useState('');
+                const [generalReason, setGeneralReason] = useState('');
+
                 const [personnel, setPersonnel] = useState([]);
                 const [personSearch, setPersonSearch] = useState('');
                 const [showDropdown, setShowDropdown] = useState(false);
@@ -1690,10 +1741,9 @@
                 const filteredPersonnel = personnel.filter(p => {
                     if (!personSearch) return false;
                     const searchLower = personSearch.toLowerCase();
-                    const name = p.Name || p.name || p['ឈ្មោះ'] || '';
-                    const id = p.ID || p.id || p['អត្តលេខ'] || '';
-                    return name.toString().toLowerCase().includes(searchLower) || 
-                           id.toString().toLowerCase().includes(searchLower);
+                    const name = String(p.Name || p.name || p['ឈ្មោះ'] || '').toLowerCase();
+                    const id = String(p.ID || p.id || p['អត្តលេខ'] || '').toLowerCase();
+                    return name.includes(searchLower) || id.includes(searchLower);
                 });
 
                 const handleSelectPerson = (person) => {
@@ -1701,6 +1751,7 @@
                     const name = person.Name || person.name || person['ឈ្មោះ'];
                     const id = person.ID || person.id || person['អត្តលេខ'];
                     setFormData(prev => ({ ...prev, requester: `${name} (${id})` }));
+                    setRequesterName(`${name} (${id})`);
                     setPersonSearch(`${name} (${id})`);
                     setShowDropdown(false);
                 };
@@ -1710,8 +1761,57 @@
                         name: '', category: '', quantity: '', unit: '', description: '', cabinetNo: '',
                         itemId: '', reason: '', requester: '', itemName: ''
                     });
+                    setStockOutCart([]);
+                    setRequesterName('');
+                    setGeneralReason('');
+                    setCurrentStockOut({ itemId: '', quantity: '' });
                     setSelectedPerson(null);
                     setPersonSearch('');
+                };
+
+                // Prepare combined list for Stock Out dropdown
+                const combinedItems = [
+                    ...items.map(i => ({ ...i, source: 'inventory_items', displayName: i.name })),
+                    ...totalData.map(i => ({ ...i, source: 'inventory', displayName: i.type, category: 'General', name: i.type })) 
+                ];
+
+                const addToCart = () => {
+                    if (!currentStockOut.itemId || !currentStockOut.quantity) {
+                        showNotification('សូមជ្រើសរើសសម្ភារៈ និងចំនួន', 'error');
+                        return;
+                    }
+                    
+                    // Find in combined list
+                    const item = combinedItems.find(i => i.id === currentStockOut.itemId);
+                    const qty = parseInt(currentStockOut.quantity);
+
+                    if (!item) return;
+                    if (qty > parseInt(item.quantity || 0)) {
+                        showNotification(`ស្តុកមិនគ្រប់គ្រាន់ (សល់: ${item.quantity})`, 'error');
+                        return;
+                    }
+
+                    const existingIndex = stockOutCart.findIndex(i => i.id === item.id);
+                    if (existingIndex >= 0) {
+                        const newCart = [...stockOutCart];
+                        const newQty = parseInt(newCart[existingIndex].outQty) + qty;
+                        if (newQty > item.quantity) {
+                            showNotification(`ចំនួនសរុបក្នុងបញ្ជីលើសពីស្តុក (សល់: ${item.quantity})`, 'error');
+                            return;
+                        }
+                        newCart[existingIndex].outQty = newQty;
+                        setStockOutCart(newCart);
+                    } else {
+                        setStockOutCart([...stockOutCart, { ...item, name: item.displayName, outQty: qty, source: item.source }]);
+                    }
+                    
+                    setCurrentStockOut({ itemId: '', quantity: '' });
+                };
+
+                const removeFromCart = (index) => {
+                    const newCart = [...stockOutCart];
+                    newCart.splice(index, 1);
+                    setStockOutCart(newCart);
                 };
 
                 return (
@@ -1779,22 +1879,79 @@
                     )}
 
                     {mode === 'out' && (
-                        <form onSubmit={(e) => handleStockOut(e, formData, resetForm)}>
-                        <h3 className="text-lg font-bold text-orange-600 mb-4 flex items-center gap-2">
-                            <PackageMinus size={20}/> ដកសម្ភារៈចេញ
-                        </h3>
-                        <Select 
-                            label="ជ្រើសរើសសម្ភារៈ" 
-                            required
-                            value={formData.itemId} 
-                            onChange={e => setFormData({...formData, itemId: e.target.value})}
-                            options={items.map(i => ({ label: `${i.name} (សល់: ${i.quantity})`, value: i.id }))}
-                        />
-                        <Input label="ចំនួនដក" type="number" required value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} />
-                        <Input label="មូលហេតុ/យកទៅណា" required value={formData.reason} onChange={e => setFormData({...formData, reason: e.target.value})} />
-                        
-                        <Button type="submit" className="w-full mt-4 bg-orange-600 hover:bg-orange-700">កាត់ស្តុក</Button>
-                        </form>
+                        <div>
+                            <h3 className="text-lg font-bold text-orange-600 mb-4 flex items-center gap-2">
+                                <PackageMinus size={20}/> ដកសម្ភារៈចេញ (ច្រើនមុខ)
+                            </h3>
+                            
+                            <Input 
+                                label="ឈ្មោះអ្នកស្នើសុំ / ឈ្មោះអ្នកដក" 
+                                required 
+                                value={requesterName} 
+                                onChange={e => setRequesterName(e.target.value)}
+                                placeholder="ឈ្មោះអ្នកដក..."
+                            />
+
+                            <div className="bg-gray-50 p-4 rounded-xl mb-4 border border-gray-100">
+                                <h4 className="text-sm font-bold text-gray-700 mb-3">បន្ថែមសម្ភារៈចូលបញ្ជី</h4>
+                                <div className="flex gap-2 mb-2">
+                                    <div className="flex-1">
+                                        <Select 
+                                            label="ជ្រើសរើសសម្ភារៈ" 
+                                            value={currentStockOut.itemId} 
+                                            onChange={e => setCurrentStockOut({...currentStockOut, itemId: e.target.value})}
+                                            options={combinedItems.map(i => ({ label: `${i.displayName} (សល់: ${i.quantity})`, value: i.id }))}
+                                        />
+                                    </div>
+                                    <div className="w-24">
+                                        <Input 
+                                            label="ចំនួន" 
+                                            type="number" 
+                                            value={currentStockOut.quantity} 
+                                            onChange={e => setCurrentStockOut({...currentStockOut, quantity: e.target.value})} 
+                                        />
+                                    </div>
+                                </div>
+                                <Button onClick={addToCart} variant="secondary" className="w-full py-2 text-sm">
+                                    <Plus size={16}/> បន្ថែមចូលបញ្ជី
+                                </Button>
+                            </div>
+
+                            {/* Cart List */}
+                            {stockOutCart.length > 0 && (
+                                <div className="mb-4">
+                                    <h4 className="text-sm font-bold text-gray-700 mb-2">បញ្ជីដក ({stockOutCart.length})</h4>
+                                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar border rounded-lg p-2">
+                                        {stockOutCart.map((item, index) => (
+                                            <div key={index} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-sm">
+                                                <span>{item.name}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-orange-600">x{item.outQty}</span>
+                                                    <button onClick={() => removeFromCart(index)} className="text-red-500 hover:bg-red-50 p-1 rounded">
+                                                        <Trash2 size={14}/>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <Input 
+                                label="មូលហេតុ/យកទៅណា" 
+                                required 
+                                value={generalReason} 
+                                onChange={e => setGeneralReason(e.target.value)} 
+                            />
+                            
+                            <Button 
+                                onClick={() => handleStockOut(stockOutCart, requesterName, generalReason, resetForm)}
+                                disabled={stockOutCart.length === 0 || !requesterName || !generalReason}
+                                className="w-full mt-4 bg-orange-600 hover:bg-orange-700 text-white"
+                            >
+                                កាត់ស្តុក (រក្សាទុក)
+                            </Button>
+                        </div>
                     )}
 
                     {mode === 'request' && (
