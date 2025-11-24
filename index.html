@@ -1236,6 +1236,8 @@
                 const [editingItem, setEditingItem] = useState(null);
                 // --- NEW: Viewing Cabinet State ---
                 const [viewingCabinet, setViewingCabinet] = useState(null);
+                // NEW State for PDF loading
+                const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
                 const filteredItems = items.filter(item => 
                     item.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -1257,9 +1259,212 @@
                     return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
                 });
 
+                // --- Aggregation Logic for Exports ---
+                const getAggregatedData = () => {
+                    const aggMap = {};
+                    
+                    filteredItems.forEach(item => {
+                        // Key by Name and Category to identify "same item"
+                        const key = `${item.name}_${item.category}`;
+                        
+                        if (!aggMap[key]) {
+                            aggMap[key] = {
+                                name: item.name,
+                                category: item.category,
+                                unit: item.unit,
+                                description: item.description,
+                                quantity: 0,
+                                locations: new Set() // To store unique locations
+                            };
+                        }
+                        
+                        // Sum quantity
+                        aggMap[key].quantity += parseInt(item.quantity || 0);
+                        
+                        // Add location
+                        const locLabel = getLocationLabel(item.cabinetNo).replace('Cabinet ', 'ទូទី');
+                        if (locLabel) aggMap[key].locations.add(locLabel);
+                    });
+
+                    return Object.values(aggMap).map(item => ({
+                        ...item,
+                        locationString: Array.from(item.locations).join(', ')
+                    }));
+                };
+
+                // --- NEW: Inventory Export Logic ---
+                const exportToExcel = () => {
+                    try {
+                        if (filteredItems.length === 0) {
+                            alert("គ្មានទិន្នន័យសម្រាប់ Export ទេ");
+                            return;
+                        }
+                        
+                        const aggregatedData = getAggregatedData();
+
+                        const dataToExport = aggregatedData.map((item, index) => ({
+                            'ល.រ': index + 1,
+                            'ឈ្មោះសម្ភារៈ': item.name,
+                            'ប្រភេទ': item.category,
+                            'ទីតាំង': item.locationString || 'N/A',
+                            'ចំនួន': item.quantity,
+                            'ខ្នាត': item.unit,
+                            'បរិយាយ': item.description
+                        }));
+
+                        if (!window.XLSX) {
+                            alert("កំពុងដំណើរការ Library សូមព្យាយាមម្តងទៀត!");
+                            return;
+                        }
+
+                        const wb = window.XLSX.utils.book_new();
+                        const ws = window.XLSX.utils.json_to_sheet(dataToExport);
+                        window.XLSX.utils.book_append_sheet(wb, ws, "Inventory_List");
+                        window.XLSX.writeFile(wb, `Inventory_List_${new Date().toISOString().slice(0,10)}.xlsx`);
+                    } catch (error) {
+                        console.error("Excel Export Error:", error);
+                        alert("មានបញ្ហាក្នុងការ Export Excel");
+                    }
+                };
+
+                const downloadPDF = () => {
+                    if (filteredItems.length === 0) {
+                        alert("គ្មានទិន្នន័យសម្រាប់ Export ទេ");
+                        return;
+                    }
+                    
+                    setIsGeneratingPDF(true);
+                    showNotification("កំពុងបង្កើត PDF...", "info");
+
+                    const aggregatedData = getAggregatedData();
+
+                    const tableRows = aggregatedData.map((item, index) => `
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 10px; text-align: center;">${index + 1}</td>
+                            <td style="padding: 10px;">
+                                <div style="font-weight: bold; color: #1f2937;">${item.name}</div>
+                                <div style="font-size: 10px; color: #6b7280;">${item.category}</div>
+                            </td>
+                            <td style="padding: 10px;">${item.locationString || '-'}</td>
+                            <td style="padding: 10px; text-align: center; font-weight: bold;">
+                                ${item.quantity} <span style="font-weight: normal; font-size: 10px;">${item.unit || 'pcs'}</span>
+                            </td>
+                            <td style="padding: 10px; color: #4b5563; font-size: 11px;">${item.description || '-'}</td>
+                        </tr>
+                    `).join('');
+
+                    const totalQty = aggregatedData.reduce((acc, item) => acc + parseInt(item.quantity || 0), 0);
+                    
+                    const element = document.createElement('div');
+                    element.innerHTML = `
+                        <div style="font-family: 'Kantumruy Pro', sans-serif; color: #1f2937; padding: 20px; background: white; width: 100%;">
+                            <style>
+                                .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #3b82f6; padding-bottom: 15px; }
+                                .logo-text { font-size: 22px; font-weight: 700; color: #1d4ed8; text-transform: uppercase; }
+                                .sub-header { font-size: 14px; color: #6b7280; margin-top: 5px; }
+                                .report-title { text-align: center; font-size: 16px; font-weight: bold; margin: 15px 0; color: #111827; }
+                                table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+                                th { background-color: #f8fafc; color: #4b5563; font-weight: 600; padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0; }
+                                .summary-box { margin-top: 20px; display: flex; justify-content: flex-end; }
+                                .summary-table { width: auto; }
+                                .summary-table td { padding: 4px 15px; font-size: 12px; }
+                                .signatures { margin-top: 50px; display: flex; justify-content: space-between; padding: 0 20px; }
+                                .sig-block { text-align: center; width: 150px; }
+                                .sig-line { border-top: 1px solid #9ca3af; margin-top: 40px; padding-top: 8px; font-size: 11px; font-weight: bold; }
+                            </style>
+
+                            <div class="header">
+                                <div class="logo-text">IT Inventory Management</div>
+                                <div class="sub-header">ប្រព័ន្ធគ្រប់គ្រងស្តុកសម្ភារៈបច្ចេកវិទ្យា</div>
+                                <div style="font-size: 10px; color: #9ca3af; margin-top: 5px;">Generated on: ${new Date().toLocaleString('km-KH')}</div>
+                            </div>
+
+                            <div class="report-title">
+                                របាយការណ៍បញ្ជីសារពើភណ្ឌ (Inventory List - Aggregated)
+                            </div>
+
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px; text-align: center;">ល.រ</th>
+                                        <th>ឈ្មោះសម្ភារៈ / ប្រភេទ</th>
+                                        <th>ទីតាំង</th>
+                                        <th style="width: 80px; text-align: center;">ចំនួន</th>
+                                        <th>បរិយាយ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+
+                            <div class="summary-box">
+                                <table class="summary-table">
+                                    <tr>
+                                        <td style="text-align: right; color: #6b7280;">មុខទំនិញសរុប:</td>
+                                        <td style="font-weight: bold;">${aggregatedData.length}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align: right; color: #6b7280;">បរិមាណសរុប:</td>
+                                        <td style="font-weight: bold; color: #1d4ed8;">${totalQty}</td>
+                                    </tr>
+                                </table>
+                            </div>
+
+                            <div class="signatures">
+                                <div class="sig-block">
+                                    <div style="font-size: 11px; color: #6b7280; margin-bottom: 5px;">រៀបចំដោយ</div>
+                                    <div class="sig-line">ហត្ថលេខា & ឈ្មោះ</div>
+                                </div>
+                                <div class="sig-block">
+                                    <div style="font-size: 11px; color: #6b7280; margin-bottom: 5px;">ត្រួតពិនិត្យដោយ</div>
+                                    <div class="sig-line">ហត្ថលេខា & ឈ្មោះ</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    const opt = {
+                        margin: 10,
+                        filename: `Inventory_List_${new Date().toISOString().slice(0,10)}.pdf`,
+                        image: { type: 'jpeg', quality: 0.98 },
+                        html2canvas: { scale: 2, useCORS: true },
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                    };
+
+                    window.html2pdf().set(opt).from(element).save().then(() => {
+                        setIsGeneratingPDF(false);
+                        showNotification("បានទាញយក PDF ជោគជ័យ!", "success");
+                    });
+                };
+
                 return (
                 <div className="animate-fadeIn relative">
-                    <h2 className="text-xl font-bold text-gray-800 mb-4">បញ្ជីសម្ភារៈក្នុងស្តុក</h2>
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold text-gray-800">បញ្ជីសម្ភារៈក្នុងស្តុក</h2>
+                        
+                        {/* --- NEW: Export Buttons --- */}
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={exportToExcel}
+                                className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 transition-colors shadow-sm"
+                            >
+                                <FileSpreadsheet size={14} /> Excel
+                            </button>
+                            <button 
+                                onClick={downloadPDF}
+                                disabled={isGeneratingPDF}
+                                className="flex items-center gap-1 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-colors shadow-sm disabled:bg-red-300"
+                            >
+                                {isGeneratingPDF ? (
+                                    <span className="animate-spin mr-1">⏳</span>
+                                ) : (
+                                    <Download size={14} />
+                                )}
+                                PDF
+                            </button>
+                        </div>
+                    </div>
                     
                     <div className="relative mb-6">
                         <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
@@ -1272,7 +1477,7 @@
                         />
                     </div>
 
-                    {/* --- NEW: Cabinet Grid View --- */}
+                    {/* --- Cabinet Grid View --- */}
                     <div className="grid grid-cols-1 gap-4 pb-20">
                         {sortedCabinetKeys.map(cabinet => {
                             const itemsInCabinet = groupedItems[cabinet];
@@ -1315,7 +1520,7 @@
                         )}
                     </div>
 
-                    {/* --- NEW: Cabinet Detail Modal (Replaces old list view) --- */}
+                    {/* --- Cabinet Detail Modal --- */}
                     {viewingCabinet && (
                         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
                             <div className="bg-white rounded-2xl w-full max-w-lg h-[85vh] shadow-2xl flex flex-col animate-popIn overflow-hidden">
