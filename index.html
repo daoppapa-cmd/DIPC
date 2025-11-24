@@ -127,7 +127,8 @@
             Box,
             FolderTree,
             List,
-            Activity
+            Activity,
+            MapPin
         } from 'lucide-react';
 
         // --- 1. Inventory Realtime Database Configuration ---
@@ -164,12 +165,23 @@
         const userAuth = getAuth(userApp); 
         
         // --- CONSTANTS ---
-        const CABINET_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
-            label: `ទូទី${i + 1}`,
-            value: `Cabinet ${i + 1}`
-        }));
+        const LOCATION_OPTIONS = [
+            ...Array.from({ length: 12 }, (_, i) => ({
+                label: `ទូទី${i + 1}`,
+                value: `Cabinet ${i + 1}`
+            })),
+            { label: 'ឃ្លាំងអគារ A', value: 'Warehouse A' },
+            { label: 'ឃ្លាំងអគារ B', value: 'Warehouse B' }
+        ];
 
         const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+
+        // Helper to get label from value
+        const getLocationLabel = (value) => {
+            if (!value) return 'មិនមានទីតាំង';
+            const option = LOCATION_OPTIONS.find(opt => opt.value === value);
+            return option ? option.label : value;
+        };
 
         // --- Helper Components ---
         const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', disabled = false }) => {
@@ -227,7 +239,7 @@
             </div>
         );
 
-        // --- NEW: Beautiful Confirmation Modal ---
+        // --- Beautiful Confirmation Modal ---
         const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, type = 'danger' }) => {
             if (!isOpen) return null;
 
@@ -267,14 +279,12 @@
             const [activeTab, setActiveTab] = useState('dashboard');
             const [items, setItems] = useState([]);
             const [requests, setRequests] = useState([]); 
-            // New State for Total Data from /inventory path
             const [totalData, setTotalData] = useState([]);
             
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState('');
             const [notification, setNotification] = useState(null);
 
-            // State for Confirmation Modal
             const [confirmModal, setConfirmModal] = useState({
                 isOpen: false,
                 title: '',
@@ -349,7 +359,6 @@
                             loadedTotal.push({ id: key, ...data[key] });
                         }
                     }
-                    // Sort by latest
                     loadedTotal.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                     setTotalData(loadedTotal);
                 });
@@ -478,16 +487,13 @@
                     type: 'danger',
                     onConfirm: async () => {
                         try {
-                            // Get current Data
                             const itemSnapshot = await get(ref(db, `inventory_items/${id}`));
                             if(itemSnapshot.exists()) {
                                 const itemData = itemSnapshot.val();
-                                // Move to Recycle Bin
                                 await set(ref(db, `recycle_bin/items/${id}`), {
                                     ...itemData,
                                     deletedAt: new Date().toISOString()
                                 });
-                                // Remove from active
                                 await remove(ref(db, `inventory_items/${id}`));
                                 showNotification('បានផ្លាស់ទីទៅធុងសំរាម', 'success');
                             }
@@ -540,7 +546,6 @@
                                 });
                             }
 
-                            // Move to Recycle Bin
                             await set(ref(db, `recycle_bin/requests/${historyItem.id}`), {
                                 ...historyItem,
                                 deletedAt: new Date().toISOString()
@@ -586,7 +591,7 @@
                     quantity: newQty,
                     reason: editingHistory.reason,
                     requester: editingHistory.requester || '',
-                    date: editingHistory.date // <-- NEW: Allow date update
+                    date: editingHistory.date
                 });
 
                 showNotification('កែប្រែប្រវត្តិជោគជ័យ!', 'success');
@@ -597,7 +602,7 @@
                 }
             };
 
-            // --- Settings View (New) ---
+            // --- Settings View (Updated Delete Logic) ---
             const SettingsView = () => {
                 const [recycleTab, setRecycleTab] = useState('items');
                 const [deletedItems, setDeletedItems] = useState([]);
@@ -613,25 +618,21 @@
                         const now = Date.now();
 
                         if (data) {
-                            // Process Items
                             if (data.items) {
                                 for (const key in data.items) {
                                     const item = { id: key, ...data.items[key] };
-                                    // Check 60 days
                                     if (item.deletedAt && (now - new Date(item.deletedAt).getTime() > SIXTY_DAYS_MS)) {
-                                        remove(ref(db, `recycle_bin/items/${key}`)); // Auto delete
+                                        remove(ref(db, `recycle_bin/items/${key}`)); 
                                     } else {
                                         dItems.push(item);
                                     }
                                 }
                             }
-                            // Process Requests
                             if (data.requests) {
                                 for (const key in data.requests) {
                                     const req = { id: key, ...data.requests[key] };
-                                    // Check 60 days
                                     if (req.deletedAt && (now - new Date(req.deletedAt).getTime() > SIXTY_DAYS_MS)) {
-                                        remove(ref(db, `recycle_bin/requests/${key}`)); // Auto delete
+                                        remove(ref(db, `recycle_bin/requests/${key}`));
                                     } else {
                                         dReqs.push(req);
                                     }
@@ -646,10 +647,8 @@
 
                 const handleRestoreItem = async (item) => {
                     try {
-                        // Restore to inventory_items
-                        const { deletedAt, ...restData } = item; // Remove deletedAt
+                        const { deletedAt, ...restData } = item; 
                         await set(ref(db, `inventory_items/${item.id}`), restData);
-                        // Remove from recycle bin
                         await remove(ref(db, `recycle_bin/items/${item.id}`));
                         showNotification('បានស្តារសម្ភារៈឡើងវិញ', 'success');
                     } catch (e) {
@@ -660,20 +659,16 @@
 
                 const handleRestoreRequest = async (req) => {
                     try {
-                        // Check if item exists to deduct stock again
                         const itemSnapshot = await get(ref(db, `inventory_items/${req.itemId}`));
                         if (itemSnapshot.exists()) {
                             const currentItem = itemSnapshot.val();
                             if (currentItem.quantity >= req.quantity) {
-                                // Re-deduct stock
                                 await update(ref(db, `inventory_items/${req.itemId}`), {
                                     quantity: currentItem.quantity - req.quantity,
                                     lastUpdated: new Date().toISOString()
                                 });
-                                // Restore Request
                                 const { deletedAt, ...restData } = req;
                                 await set(ref(db, `inventory_requests/${req.id}`), restData);
-                                // Remove from recycle bin
                                 await remove(ref(db, `recycle_bin/requests/${req.id}`));
                                 showNotification('បានស្តារសំណើ និងកាត់ស្តុកវិញជោគជ័យ', 'success');
                             } else {
@@ -688,11 +683,24 @@
                     }
                 };
 
-                const handlePermanentDelete = async (path, id) => {
-                    if(window.confirm("តើអ្នកចង់លុបជាអចិន្ត្រៃយ៍មែនទេ?")) {
-                        await remove(ref(db, `${path}/${id}`));
-                        showNotification('បានលុបជាអចិន្ត្រៃយ៍', 'success');
-                    }
+                // UPDATED: handlePermanentDelete to use Custom Modal
+                const handlePermanentDelete = (path, id) => {
+                    setConfirmModal({
+                        isOpen: true,
+                        title: 'លុបជាអចិន្ត្រៃយ៍',
+                        message: 'តើអ្នកពិតជាចង់លុបទិន្នន័យនេះជាអចិន្ត្រៃយ៍មែនទេ? សកម្មភាពនេះមិនអាចត្រឡប់វិញបានទេ។',
+                        type: 'danger',
+                        onConfirm: async () => {
+                            try {
+                                await remove(ref(db, `${path}/${id}`));
+                                showNotification('បានលុបជាអចិន្ត្រៃយ៍', 'success');
+                            } catch (e) {
+                                console.error(e);
+                                showNotification('មានបញ្ហា', 'error');
+                            }
+                            closeConfirmModal();
+                        }
+                    });
                 };
 
                 return (
@@ -1270,7 +1278,8 @@
                             const itemsInCabinet = groupedItems[cabinet];
                             const itemCount = itemsInCabinet.length;
                             const totalQty = itemsInCabinet.reduce((sum, i) => sum + parseInt(i.quantity || 0), 0);
-                            
+                            const displayName = getLocationLabel(cabinet).replace('Cabinet ', 'ទូទី');
+
                             return (
                                 <div key={cabinet} 
                                     onClick={() => setViewingCabinet({ name: cabinet, items: itemsInCabinet })}
@@ -1278,11 +1287,11 @@
                                 >
                                     <div className="flex items-center gap-4">
                                         <div className="w-14 h-14 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                                            <Package size={28} strokeWidth={1.5} />
+                                            {cabinet.startsWith('Cabinet') ? <Package size={28} strokeWidth={1.5} /> : <MapPin size={28} strokeWidth={1.5} />}
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-lg text-gray-800 group-hover:text-blue-700 transition-colors">
-                                                {cabinet.replace('Cabinet ', 'ទូទី')}
+                                                {displayName}
                                             </h3>
                                             <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                                                 <span className="bg-gray-100 px-2 py-0.5 rounded text-xs font-medium text-gray-600">{itemCount} មុខទំនិញ</span>
@@ -1314,10 +1323,10 @@
                                 <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
-                                            <Package size={20} />
+                                            {viewingCabinet.name.startsWith('Cabinet') ? <Package size={20} /> : <MapPin size={20} />}
                                         </div>
                                         <div>
-                                            <h3 className="font-bold text-xl text-gray-800">{viewingCabinet.name.replace('Cabinet ', 'ទូទី')}</h3>
+                                            <h3 className="font-bold text-xl text-gray-800">{getLocationLabel(viewingCabinet.name).replace('Cabinet ', 'ទូទី')}</h3>
                                             <p className="text-xs text-gray-500">{viewingCabinet.items.length} មុខទំនិញនៅក្នុងនេះ</p>
                                         </div>
                                     </div>
@@ -1392,10 +1401,10 @@
                                 ]}
                                 />
                                 <Select 
-                                    label="លេខទូ" 
+                                    label="ទីតាំង" 
                                     value={editingItem.cabinetNo} 
                                     onChange={e => setEditingItem({...editingItem, cabinetNo: e.target.value})}
-                                    options={CABINET_OPTIONS}
+                                    options={LOCATION_OPTIONS}
                                 />
                             </div>
                             <div className="grid grid-cols-2 gap-3">
@@ -1547,11 +1556,11 @@
                             ]}
                             />
                             <Select 
-                                label="លេខទូ" 
+                                label="ទីតាំង" 
                                 required
                                 value={formData.cabinetNo} 
                                 onChange={e => setFormData({...formData, cabinetNo: e.target.value})}
-                                options={CABINET_OPTIONS}
+                                options={LOCATION_OPTIONS}
                             />
                         </div>
                         <div className="grid grid-cols-2 gap-4">
