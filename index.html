@@ -28,9 +28,16 @@
         .animate-fadeIn {
             animation: fadeIn 0.3s ease-out;
         }
+        .animate-popIn {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0.95) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
         }
         /* Custom Scrollbar for dropdown */
         .custom-scrollbar::-webkit-scrollbar {
@@ -108,7 +115,9 @@
             FileSpreadsheet,
             Printer,
             FileText,
-            Download
+            Download,
+            AlertCircle,
+            Info
         } from 'lucide-react';
 
         // --- 1. Inventory Realtime Database Configuration ---
@@ -153,13 +162,15 @@
 
         // --- Helper Components ---
         const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', disabled = false }) => {
-            const base = "px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2";
+            const base = "px-4 py-2.5 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 shadow-sm";
             const variants = {
-                primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300",
-                secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
-                danger: "bg-red-100 text-red-600 hover:bg-red-200",
-                success: "bg-green-600 text-white hover:bg-green-700",
-                purple: "bg-purple-600 text-white hover:bg-purple-700"
+                primary: "bg-blue-600 text-white hover:bg-blue-700 hover:shadow-blue-200 hover:shadow-lg disabled:bg-blue-300",
+                secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 hover:text-gray-900",
+                danger: "bg-red-50 text-red-600 hover:bg-red-100",
+                "danger-solid": "bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-200 hover:shadow-lg hover:shadow-red-300", // Updated High Contrast Danger
+                success: "bg-green-600 text-white hover:bg-green-700 shadow-green-200 hover:shadow-lg",
+                purple: "bg-purple-600 text-white hover:bg-purple-700 shadow-purple-200 hover:shadow-lg",
+                outline: "border border-gray-300 text-gray-700 hover:bg-gray-50"
             };
             return (
                 <button 
@@ -183,7 +194,7 @@
                 required={required}
                 disabled={disabled}
                 placeholder={placeholder}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-100"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-100"
                 />
             </div>
         );
@@ -195,7 +206,7 @@
                 value={value}
                 onChange={onChange}
                 required={required}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
                 >
                 <option value="">-- សូមជ្រើសរើស --</option>
                 {options.map((opt, idx) => (
@@ -204,6 +215,39 @@
                 </select>
             </div>
         );
+
+        // --- NEW: Beautiful Confirmation Modal ---
+        const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, type = 'danger' }) => {
+            if (!isOpen) return null;
+
+            const iconColor = type === 'danger' ? 'text-red-500' : 'text-amber-500';
+            const iconBg = type === 'danger' ? 'bg-red-50' : 'bg-amber-50';
+            const buttonVariant = type === 'danger' ? 'danger-solid' : 'primary';
+
+            return (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-fadeIn">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-popIn border border-white/20 ring-1 ring-black/5">
+                        <div className="p-8 text-center">
+                            <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-6 ${iconBg} ${iconColor} shadow-inner`}>
+                                {type === 'danger' ? <Trash2 size={40} strokeWidth={1.5}/> : <Info size={40} strokeWidth={1.5}/>}
+                            </div>
+                            <h3 className="text-2xl font-bold text-gray-800 mb-3 tracking-tight">{title}</h3>
+                            <p className="text-gray-500 mb-8 text-base leading-relaxed px-2">
+                                {message}
+                            </p>
+                            <div className="flex gap-3">
+                                <Button onClick={onCancel} variant="secondary" className="flex-1 py-3 text-base">
+                                    បោះបង់
+                                </Button>
+                                <Button onClick={onConfirm} variant={buttonVariant} className="flex-1 py-3 text-base font-bold">
+                                    {type === 'danger' ? 'លុបចេញ' : 'យល់ព្រម'}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
 
         // --- Main App Component ---
         function ComputerInventoryApp() {
@@ -215,6 +259,15 @@
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState('');
             const [notification, setNotification] = useState(null);
+
+            // State for Confirmation Modal
+            const [confirmModal, setConfirmModal] = useState({
+                isOpen: false,
+                title: '',
+                message: '',
+                onConfirm: () => {},
+                type: 'danger'
+            });
 
             // Authentication Setup (Primary)
             useEffect(() => {
@@ -279,6 +332,10 @@
             const showNotification = (msg, type = 'success') => {
                 setNotification({ msg, type });
                 setTimeout(() => setNotification(null), 3000);
+            };
+
+            const closeConfirmModal = () => {
+                setConfirmModal(prev => ({ ...prev, isOpen: false }));
             };
 
             // --- Actions ---
@@ -381,17 +438,23 @@
                 }
             };
 
-            const handleDeleteItem = async (id, name) => {
-                console.log(`CONFIRM: តើអ្នកពិតជាចង់លុប "${name}" ចេញពីស្តុកមែនទេ?`);
-                if(true) { 
-                try {
-                    await remove(ref(db, `inventory_items/${id}`));
-                    showNotification('បានលុបទិន្នន័យជោគជ័យ', 'success');
-                } catch (err) {
-                    console.error(err);
-                    showNotification('មិនអាចលុបបានទេ', 'error');
-                }
-                }
+            const handleDeleteItem = (id, name) => {
+                setConfirmModal({
+                    isOpen: true,
+                    title: 'បញ្ជាក់ការលុប',
+                    message: `តើអ្នកពិតជាចង់លុប "${name}" ចេញពីស្តុកមែនទេ? ការលុបនេះមិនអាចត្រឡប់វិញបានទេ។`,
+                    type: 'danger',
+                    onConfirm: async () => {
+                        try {
+                            await remove(ref(db, `inventory_items/${id}`));
+                            showNotification('បានលុបទិន្នន័យជោគជ័យ', 'success');
+                        } catch (err) {
+                            console.error(err);
+                            showNotification('មិនអាចលុបបានទេ', 'error');
+                        }
+                        closeConfirmModal();
+                    }
+                });
             };
 
             const handleUpdateItem = async (e, editingItem, setEditingItem) => {
@@ -414,31 +477,35 @@
                 }
             };
 
-            const handleDeleteHistory = async (historyItem) => {
-                console.log(`CONFIRM: លុបកំណត់ត្រានេះនឹងបង្វិលចំនួន ${historyItem.quantity} ចូលស្តុកវិញ។ តើអ្នកយល់ព្រមទេ?`);
-                if(!true) return; 
+            const handleDeleteHistory = (historyItem) => {
+                setConfirmModal({
+                    isOpen: true,
+                    title: 'បញ្ជាក់ការលុបប្រវត្តិ',
+                    message: `លុបកំណត់ត្រានេះនឹងបង្វិលចំនួន ${historyItem.quantity} ចូលស្តុកវិញ។ តើអ្នកពិតជាចង់លុបមែនទេ?`,
+                    type: 'warning', // This will use primary button style or you can add warning-solid
+                    onConfirm: async () => {
+                        try {
+                            let inventoryItem = items.find(i => i.id === historyItem.itemId);
+                            if (!inventoryItem) {
+                                inventoryItem = items.find(i => i.name === historyItem.itemName);
+                            }
 
-                try {
-                let inventoryItem = items.find(i => i.id === historyItem.itemId);
-                if (!inventoryItem) {
-                    inventoryItem = items.find(i => i.name === historyItem.itemName);
-                }
+                            if (inventoryItem) {
+                                await update(ref(db, `inventory_items/${inventoryItem.id}`), {
+                                quantity: parseInt(inventoryItem.quantity) + parseInt(historyItem.quantity),
+                                lastUpdated: new Date().toISOString()
+                                });
+                            }
 
-                if (inventoryItem) {
-                    await update(ref(db, `inventory_items/${inventoryItem.id}`), {
-                    quantity: parseInt(inventoryItem.quantity) + parseInt(historyItem.quantity),
-                    lastUpdated: new Date().toISOString()
-                    });
-                } else {
-                    console.log("ALERT: សម្ភារៈនេះប្រហែលត្រូវបានលុបពីស្តុកហើយ។ ទិន្នន័យនឹងត្រូវបានលុបចេញពីប្រវត្តិប៉ុណ្ណោះ។");
-                }
-
-                await remove(ref(db, `inventory_requests/${historyItem.id}`));
-                showNotification('បានលុប និងបង្វិលស្តុកវិញជោគជ័យ', 'success');
-                } catch (error) {
-                console.error(error);
-                showNotification('បរាជ័យក្នុងការលុបប្រវត្តិ', 'error');
-                }
+                            await remove(ref(db, `inventory_requests/${historyItem.id}`));
+                            showNotification('បានលុប និងបង្វិលស្តុកវិញជោគជ័យ', 'success');
+                        } catch (error) {
+                            console.error(error);
+                            showNotification('បរាជ័យក្នុងការលុបប្រវត្តិ', 'error');
+                        }
+                        closeConfirmModal();
+                    }
+                });
             };
 
             const handleUpdateHistory = async (e, editingHistory, setEditingHistory) => {
@@ -454,7 +521,7 @@
 
                     if (inventoryItem) {
                     if (inventoryItem.quantity < diff) {
-                        console.log("ALERT: ស្តុកមិនគ្រប់គ្រាន់សម្រាប់ការកែប្រែចំនួននេះទេ!");
+                        alert("ស្តុកមិនគ្រប់គ្រាន់សម្រាប់ការកែប្រែចំនួននេះទេ!"); 
                         return;
                     }
                     await update(ref(db, `inventory_items/${inventoryItem.id}`), {
@@ -462,7 +529,7 @@
                         lastUpdated: new Date().toISOString()
                     });
                     } else {
-                        console.log("ALERT: រកមិនឃើញសម្ភារៈក្នុងស្តុក។ កែប្រែបានតែទិន្នន័យប្រវត្តិប៉ុណ្ណោះ។");
+                        alert("រកមិនឃើញសម្ភារៈក្នុងស្តុក។ កែប្រែបានតែទិន្នន័យប្រវត្តិប៉ុណ្ណោះ។");
                     }
                 }
 
@@ -1266,12 +1333,22 @@
 
                     {/* Notification Toast */}
                     {notification && (
-                        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 w-11/12 max-w-sm animate-fadeIn no-print">
+                        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[70] w-11/12 max-w-sm animate-fadeIn no-print">
                             <div className={`shadow-lg rounded-lg p-3 text-center text-white font-medium ${notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>
                                 {notification.msg}
                             </div>
                         </div>
                     )}
+
+                    {/* Confirmation Modal Render */}
+                    <ConfirmationModal 
+                        isOpen={confirmModal.isOpen}
+                        title={confirmModal.title}
+                        message={confirmModal.message}
+                        onConfirm={confirmModal.onConfirm}
+                        onCancel={closeConfirmModal}
+                        type={confirmModal.type}
+                    />
 
                     {/* Content */}
                     <main className="p-4">
