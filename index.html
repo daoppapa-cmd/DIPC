@@ -928,29 +928,54 @@
 
 // --- UPDATED HISTORY VIEW (FULL) ---
            // --- UPDATED HISTORY VIEW (FIXED DELETE BUTTON) ---
+           // --- UPDATED HISTORY VIEW (With Add Item & Edit Reason) ---
             const HistoryView = () => {
                 const [historyTab, setHistoryTab] = useState('direct');
-                const [editingGroup, setEditingGroup] = useState(null); // For Batch Edit
+                const [editingGroup, setEditingGroup] = useState(null); 
                 const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
-                // 1. Filter raw items based on Tab
+                // Local state for "Add Item" inside modal
+                const [newItemToAdd, setNewItemToAdd] = useState({ itemId: '', quantity: '' });
+
+                // 1. Prepare Data for Dropdown (Combine Local & Global items)
+                // Filter out broken items and prepare labels
+                const availableItemsForAdd = [
+                    ...items.map(i => ({ 
+                        label: `${i.name} (សល់: ${i.quantity})`, 
+                        value: i.id, 
+                        quantity: i.quantity,
+                        name: i.name,
+                        source: 'inventory_items'
+                    })),
+                    ...totalData
+                        .filter(i => i.status !== 'ខូច')
+                        .map(i => ({ 
+                            label: `${i.type} (សល់: ${i.quantity} _${i.status || ''})`, 
+                            value: i.id, 
+                            quantity: i.quantity,
+                            name: i.type,
+                            source: 'inventory',
+                            category: 'General'
+                        }))
+                ];
+
+                // 2. Filter raw items based on Tab
                 const rawHistoryItems = requests.filter(r =>
                     historyTab === 'direct' ? r.type === 'DIRECT_OUT' : r.type === 'REQUEST_OUT'
                 );
 
-                // 2. Grouping Function
+                // 3. Grouping Function
                 const getGroupedHistory = () => {
                     const groups = {};
-
                     rawHistoryItems.forEach(item => {
-                        // Group by Date (minute precision), Requester, and Reason
+                        // Group by Date (minute), Requester, Reason
                         const dateKey = new Date(item.date).setSeconds(0, 0);
                         const key = `${dateKey}_${item.requester || 'N/A'}_${item.reason || 'N/A'}`;
 
                         if (!groups[key]) {
                             groups[key] = {
                                 groupId: key,
-                                date: item.date, // ISO String
+                                date: item.date,
                                 requester: item.requester,
                                 reason: item.reason,
                                 type: item.type,
@@ -959,8 +984,6 @@
                         }
                         groups[key].items.push(item);
                     });
-
-                    // Sort by date descending
                     return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
                 };
 
@@ -972,154 +995,213 @@
                     return date.toLocaleDateString('km-KH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
                 };
 
-                // --- GROUP DELETE FUNCTION (NEW) ---
-                const handleDeleteGroup = (group) => {
-                    setConfirmModal({
-                        isOpen: true,
-                        title: 'លុបប្រវត្តិទាំងមូល',
-                        message: `តើអ្នកពិតជាចង់លុបប្រវត្តិប្រតិបត្តិការរបស់ "${group.requester || 'មិនស្គាល់'}" ទាំង ${group.items.length} មុខនេះមែនទេ? (ស្តុកនឹងត្រូវបានបង្វិលចូលវិញ)`,
-                        type: 'danger',
-                        onConfirm: async () => {
-                            try {
-                                const updates = {};
-                                const stockRestores = {}; // Map to aggregate stock returns { itemId: qty }
+                // --- MODAL ACTIONS ---
 
-                                for (const item of group.items) {
-                                    // 1. Prepare recycle bin entry
-                                    updates[`recycle_bin/requests/${item.id}`] = { ...item, deletedAt: new Date().toISOString() };
-                                    // 2. Delete from active requests
-                                    updates[`inventory_requests/${item.id}`] = null;
+                // A. Add new item to temporary list
+                const handleAddItemToBatch = () => {
+                    if (!newItemToAdd.itemId || !newItemToAdd.quantity) {
+                        alert("សូមជ្រើសរើសសម្ភារៈ និងចំនួន!");
+                        return;
+                    }
 
-                                    // 3. Aggregate Stock Restore
-                                    let invId = item.itemId;
-                                    // Fallback: Find by name if ID matches nothing (for old data)
-                                    if (!invId || !items.find(i => i.id === invId)) {
-                                        const match = items.find(i => i.name === item.itemName);
-                                        if (match) invId = match.id;
-                                    }
+                    const selectedItem = availableItemsForAdd.find(i => i.value === newItemToAdd.itemId);
+                    if (!selectedItem) return;
 
-                                    if (invId) {
-                                        stockRestores[invId] = (stockRestores[invId] || 0) + parseInt(item.quantity);
-                                    }
-                                }
+                    if (parseInt(newItemToAdd.quantity) > parseInt(selectedItem.quantity)) {
+                        alert(`ស្តុកមិនគ្រប់គ្រាន់! (សល់: ${selectedItem.quantity})`);
+                        return;
+                    }
 
-                                // 4. Apply Stock Updates
-                                for (const [invId, qtyToAdd] of Object.entries(stockRestores)) {
-                                    const currentItem = items.find(i => i.id === invId);
-                                    if (currentItem) {
-                                        updates[`inventory_items/${invId}/quantity`] = parseInt(currentItem.quantity) + qtyToAdd;
-                                        updates[`inventory_items/${invId}/lastUpdated`] = new Date().toISOString();
-                                    }
-                                }
+                    const newItemObj = {
+                        id: `NEW_${Date.now()}`, // Temporary ID
+                        itemId: selectedItem.value,
+                        itemName: selectedItem.name,
+                        category: selectedItem.category || 'Unknown', // Fallback
+                        quantity: newItemToAdd.quantity,
+                        isNew: true, // Flag to identify new items
+                        source: selectedItem.source
+                    };
 
-                                await update(ref(db), updates);
-                                showNotification('បានលុបក្រុមប្រវត្តិជោគជ័យ!', 'success');
-                                closeConfirmModal();
-                            } catch (error) {
-                                console.error(error);
-                                showNotification('បរាជ័យក្នុងការលុប', 'error');
-                            }
-                        }
+                    setEditingGroup({
+                        ...editingGroup,
+                        items: [...editingGroup.items, newItemObj]
                     });
+                    setNewItemToAdd({ itemId: '', quantity: '' }); // Reset inputs
                 };
 
-                // --- BATCH EDIT LOGIC ---
+                // B. Remove item (handle both existing and new)
                 const handleRemoveFromBatch = (indexToRemove) => {
                     const itemToRemove = editingGroup.items[indexToRemove];
                     const newItems = editingGroup.items.filter((_, idx) => idx !== indexToRemove);
+                    
+                    let newDeletedIds = editingGroup.deletedIds || [];
+                    if (!itemToRemove.isNew) {
+                        newDeletedIds.push(itemToRemove.id);
+                    }
+
                     setEditingGroup({
                         ...editingGroup,
                         items: newItems,
-                        deletedIds: [...(editingGroup.deletedIds || []), itemToRemove.id]
+                        deletedIds: newDeletedIds
                     });
                 };
 
+                // C. Change Quantity
                 const handleChangeBatchQty = (index, newQty) => {
                     const updatedItems = [...editingGroup.items];
                     updatedItems[index].quantity = newQty;
                     setEditingGroup({ ...editingGroup, items: updatedItems });
                 };
 
+                // --- SAVE / UPDATE LOGIC (Main Function) ---
                 const handleBatchUpdate = async (e) => {
                     e.preventDefault();
+
                     if (editingGroup.items.length === 0 && (!editingGroup.deletedIds || editingGroup.deletedIds.length === 0)) {
                         setEditingGroup(null);
                         return;
                     }
+
                     try {
                         const newISODate = new Date(editingGroup.newDate).toISOString();
+                        const newReason = editingGroup.newReason;
                         const updates = {};
 
-                        // A. Process Deletions
+                        // 1. Process Deletions (Restore Stock & Soft Delete Request)
                         if (editingGroup.deletedIds) {
                             for (const deletedId of editingGroup.deletedIds) {
                                 const originalItem = rawHistoryItems.find(i => i.id === deletedId);
                                 if (originalItem) {
-                                    const invItem = items.find(i => i.id === originalItem.itemId) || items.find(i => i.name === originalItem.itemName);
+                                    // Identify Source and Restore
+                                    const sourcePath = originalItem.source === 'inventory' ? 'inventory' : 'inventory_items';
+                                    const invItem = (sourcePath === 'inventory') 
+                                        ? totalData.find(i => i.id === originalItem.itemId)
+                                        : items.find(i => i.id === originalItem.itemId);
+
                                     if (invItem) {
-                                        updates[`inventory_items/${invItem.id}/quantity`] = parseInt(invItem.quantity) + parseInt(originalItem.quantity);
-                                        updates[`inventory_items/${invItem.id}/lastUpdated`] = new Date().toISOString();
+                                        updates[`${sourcePath}/${invItem.id}/quantity`] = parseInt(invItem.quantity) + parseInt(originalItem.quantity);
+                                        if (sourcePath === 'inventory_items') updates[`${sourcePath}/${invItem.id}/lastUpdated`] = new Date().toISOString();
                                     }
+
                                     updates[`recycle_bin/requests/${deletedId}`] = { ...originalItem, deletedAt: new Date().toISOString() };
                                     updates[`inventory_requests/${deletedId}`] = null;
                                 }
                             }
                         }
 
-                        // B. Process Updates
+                        // 2. Process Existing & New Items
                         for (const item of editingGroup.items) {
-                            const originalItem = rawHistoryItems.find(i => i.id === item.id);
-                            if(!originalItem) continue;
-                            const oldQty = parseInt(originalItem.quantity);
-                            const newQty = parseInt(item.quantity);
-
-                            updates[`inventory_requests/${item.id}/date`] = newISODate;
-                            updates[`inventory_requests/${item.id}/quantity`] = newQty;
-
-                            if (oldQty !== newQty) {
-                                const diff = newQty - oldQty;
-                                const invItem = items.find(i => i.id === item.itemId) || items.find(i => i.name === item.itemName);
+                            if (item.isNew) {
+                                // --- Handle NEW Item ---
+                                const newReqKey = push(ref(db, 'inventory_requests')).key;
+                                const sourcePath = item.source === 'inventory' ? 'inventory' : 'inventory_items';
+                                const invItem = (sourcePath === 'inventory') 
+                                        ? totalData.find(i => i.id === item.itemId)
+                                        : items.find(i => i.id === item.itemId);
+                                
                                 if (invItem) {
+                                    // Deduct Stock
                                     const currentStock = parseInt(invItem.quantity);
-                                    updates[`inventory_items/${invItem.id}/quantity`] = currentStock - diff;
-                                    updates[`inventory_items/${invItem.id}/lastUpdated`] = new Date().toISOString();
+                                    updates[`${sourcePath}/${invItem.id}/quantity`] = currentStock - parseInt(item.quantity);
+                                    if(sourcePath === 'inventory_items') updates[`${sourcePath}/${invItem.id}/lastUpdated`] = new Date().toISOString();
+
+                                    // Create Request Record
+                                    updates[`inventory_requests/${newReqKey}`] = {
+                                        type: editingGroup.type, // Inherit type
+                                        itemId: item.itemId,
+                                        itemName: item.itemName,
+                                        category: item.category || 'General',
+                                        quantity: parseInt(item.quantity),
+                                        reason: newReason, // Use new reason
+                                        requester: editingGroup.requester, // Inherit requester
+                                        date: newISODate, // Use new date
+                                        status: 'COMPLETED',
+                                        source: item.source
+                                    };
+                                }
+                            } else {
+                                // --- Handle EXISTING Item Update ---
+                                const originalItem = rawHistoryItems.find(i => i.id === item.id);
+                                if (!originalItem) continue;
+
+                                const oldQty = parseInt(originalItem.quantity);
+                                const newQty = parseInt(item.quantity);
+
+                                // Update Request Fields
+                                updates[`inventory_requests/${item.id}/date`] = newISODate;
+                                updates[`inventory_requests/${item.id}/reason`] = newReason;
+                                updates[`inventory_requests/${item.id}/quantity`] = newQty;
+
+                                // Adjust Stock if Qty Changed
+                                if (oldQty !== newQty) {
+                                    const diff = newQty - oldQty;
+                                    const sourcePath = originalItem.source === 'inventory' ? 'inventory' : 'inventory_items';
+                                    const invItem = (sourcePath === 'inventory') 
+                                        ? totalData.find(i => i.id === originalItem.itemId)
+                                        : items.find(i => i.id === originalItem.itemId);
+
+                                    if (invItem) {
+                                        const currentStock = parseInt(invItem.quantity);
+                                        updates[`${sourcePath}/${invItem.id}/quantity`] = currentStock - diff;
+                                        if (sourcePath === 'inventory_items') updates[`${sourcePath}/${invItem.id}/lastUpdated`] = new Date().toISOString();
+                                    }
                                 }
                             }
                         }
+
                         await update(ref(db), updates);
                         showNotification('កែប្រែទិន្នន័យជោគជ័យ!', 'success');
                         setEditingGroup(null);
+                        setNewItemToAdd({ itemId: '', quantity: '' });
+
                     } catch (error) {
                         console.error(error);
                         showNotification('បរាជ័យក្នុងការកែប្រែ', 'error');
                     }
                 };
 
-                // --- EXPORTS ---
+                const handleDeleteGroup = (group) => {
+                    setConfirmModal({
+                        isOpen: true,
+                        title: 'លុបប្រវត្តិទាំងមូល',
+                        message: `តើអ្នកពិតជាចង់លុបប្រវត្តិទាំងមូលនេះមែនទេ? ស្តុកនឹងត្រូវបានបង្វិលចូលវិញ។`,
+                        type: 'danger',
+                        onConfirm: async () => {
+                            try {
+                                const updates = {};
+                                for (const item of group.items) {
+                                    const sourcePath = item.source === 'inventory' ? 'inventory' : 'inventory_items';
+                                    const invItem = (sourcePath === 'inventory') ? totalData.find(i => i.id === item.itemId) : items.find(i => i.id === item.itemId);
+                                    
+                                    if (invItem) {
+                                        updates[`${sourcePath}/${invItem.id}/quantity`] = parseInt(invItem.quantity) + parseInt(item.quantity);
+                                    }
+                                    updates[`recycle_bin/requests/${item.id}`] = { ...item, deletedAt: new Date().toISOString() };
+                                    updates[`inventory_requests/${item.id}`] = null;
+                                }
+                                await update(ref(db), updates);
+                                showNotification('បានលុបជោគជ័យ!', 'success');
+                                closeConfirmModal();
+                            } catch (e) { showNotification('បរាជ័យ', 'error'); }
+                        }
+                    });
+                };
+
+                // --- EXPORT FUNCTIONS ---
                 const exportToExcel = () => {
-                    try {
+                     try {
                         if (groupedHistory.length === 0) { alert("គ្មានទិន្នន័យ"); return; }
                         const dataToExport = [];
                         groupedHistory.forEach((group, gIndex) => {
-                            dataToExport.push({
-                                'ល.រ': `Transaction #${gIndex + 1}`,
-                                'កាលបរិច្ឆេទ': formatDate(group.date),
-                                'អ្នកស្នើសុំ': group.requester || '-',
-                                'មូលហេតុ': group.reason, 'ឈ្មោះសម្ភារៈ': '', 'ចំនួន': ''
-                            });
-                            group.items.forEach((item, iIndex) => {
-                                dataToExport.push({
-                                    'ល.រ': `${gIndex + 1}.${iIndex + 1}`, 'កាលបរិច្ឆេទ': '', 'អ្នកស្នើសុំ': '', 'មូលហេតុ': '',
-                                    'ឈ្មោះសម្ភារៈ': item.itemName, 'ចំនួន': item.quantity
-                                });
-                            });
+                            dataToExport.push({ 'ល.រ': `Transaction #${gIndex + 1}`, 'កាលបរិច្ឆេទ': formatDate(group.date), 'អ្នកស្នើសុំ': group.requester || '-', 'មូលហេតុ': group.reason, 'ឈ្មោះសម្ភារៈ': '', 'ចំនួន': '' });
+                            group.items.forEach((item, iIndex) => { dataToExport.push({ 'ល.រ': `${gIndex + 1}.${iIndex + 1}`, 'កាលបរិច្ឆេទ': '', 'អ្នកស្នើសុំ': '', 'មូលហេតុ': '', 'ឈ្មោះសម្ភារៈ': item.itemName, 'ចំនួន': item.quantity }); });
                             dataToExport.push({});
                         });
                         if (typeof XLSX === 'undefined') return;
                         const wb = XLSX.utils.book_new();
                         const ws = XLSX.utils.json_to_sheet(dataToExport);
                         XLSX.utils.book_append_sheet(wb, ws, "History");
-                        XLSX.writeFile(wb, `History_Grouped_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                        XLSX.writeFile(wb, `History_${new Date().toISOString().slice(0, 10)}.xlsx`);
                     } catch (error) { console.error(error); }
                 };
 
@@ -1133,41 +1215,19 @@
                             <td style="padding: 8px; text-align: center;">${idx + 1}</td>
                             <td style="padding: 8px;">${item.itemName} <span style="font-size: 10px; color: #666;">(${item.category})</span></td>
                             <td style="padding: 8px; text-align: center; font-weight: bold;">${item.quantity}</td>
-                        </tr>
-                    `).join('');
+                        </tr>`).join('');
                         return `
                         <div style="page-break-inside: avoid; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
                             <div style="background-color: #f8fafc; padding: 15px; border-bottom: 1px solid #ddd;">
                                 <table style="width: 100%;">
-                                    <tr>
-                                        <td>
-                                            <div style="font-weight: bold; color: #1e40af;">ប្រតិបត្តិការ #${index + 1}</div>
-                                            <div style="font-size: 12px; color: #64748b;">${formatDate(group.date)}</div>
-                                        </td>
-                                        <td style="text-align: right;">
-                                            <div style="font-weight: bold;">${group.requester || 'N/A'}</div>
-                                            <div style="font-size: 12px; color: #64748b;">${group.reason}</div>
-                                        </td>
-                                    </tr>
+                                    <tr><td><div style="font-weight: bold; color: #1e40af;">ប្រតិបត្តិការ #${index + 1}</div><div style="font-size: 12px; color: #64748b;">${formatDate(group.date)}</div></td><td style="text-align: right;"><div style="font-weight: bold;">${group.requester || 'N/A'}</div><div style="font-size: 12px; color: #64748b;">${group.reason}</div></td></tr>
                                 </table>
                             </div>
-                            <div style="padding: 10px;">
-                                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-                                    <thead>
-                                        <tr style="background-color: #f1f5f9; color: #475569;">
-                                            <th style="padding: 8px; text-align: center; width: 40px;">#</th>
-                                            <th style="padding: 8px; text-align: left;">ឈ្មោះសម្ភារៈ</th>
-                                            <th style="padding: 8px; text-align: center; width: 60px;">ចំនួន</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>${itemRows}</tbody>
-                                </table>
-                            </div>
-                        </div>
-                    `;
+                            <div style="padding: 10px;"><table style="width: 100%; border-collapse: collapse; font-size: 12px;"><thead><tr style="background-color: #f1f5f9; color: #475569;"><th style="padding: 8px; text-align: center; width: 40px;">#</th><th style="padding: 8px; text-align: left;">ឈ្មោះសម្ភារៈ</th><th style="padding: 8px; text-align: center; width: 60px;">ចំនួន</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+                        </div>`;
                     }).join('');
                     const element = document.createElement('div');
-                    element.innerHTML = `<div style="font-family: 'Kantumruy Pro', sans-serif; padding: 20px; background: white; width: 100%;"><div style="text-align: center; margin-bottom: 20px;"><h2 style="color: #1d4ed8; margin: 0;">របាយការណ៍ប្រវត្តិ (លម្អិត)</h2><p style="font-size: 12px; color: #666;">Generated on: ${new Date().toLocaleString('km-KH')}</p></div>${vouchersHtml}</div>`;
+                    element.innerHTML = `<div style="font-family: 'Kantumruy Pro', sans-serif; padding: 20px; background: white; width: 100%;"><div style="text-align: center; margin-bottom: 20px;"><h2 style="color: #1d4ed8; margin: 0;">របាយការណ៍ប្រវត្តិ</h2><p style="font-size: 12px; color: #666;">Generated: ${new Date().toLocaleString('km-KH')}</p></div>${vouchersHtml}</div>`;
                     const opt = { margin: 10, filename: `Inventory_History.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } };
                     html2pdf().set(opt).from(element).save().then(() => setIsGeneratingPDF(false));
                 };
@@ -1175,35 +1235,23 @@
                 return (
                     <div className="animate-fadeIn relative pb-20">
                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                            <History size={20} className="text-orange-600" />
-                            ប្រវត្តិប្រតិបត្តិការ (Grouped)
+                            <History size={20} className="text-orange-600" /> ប្រវត្តិប្រតិបត្តិការ
                         </h2>
 
-                        {/* Tabs & Actions */}
                         <div className="flex flex-col gap-3 mb-6">
                             <div className="flex gap-2 bg-gray-100 rounded-lg p-1">
-                                <button onClick={() => setHistoryTab('direct')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'direct' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}>
-                                    <PackageMinus size={16} /> ដកចេញទូទៅ
-                                </button>
-                                <button onClick={() => setHistoryTab('request')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}>
-                                    <ClipboardList size={16} /> ប្រវត្តិសំណើ
-                                </button>
+                                <button onClick={() => setHistoryTab('direct')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'direct' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}><PackageMinus size={16} /> ដកចេញទូទៅ</button>
+                                <button onClick={() => setHistoryTab('request')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}><ClipboardList size={16} /> ប្រវត្តិសំណើ</button>
                             </div>
                             <div className="flex justify-end gap-2">
-                                <button onClick={exportToExcel} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 shadow-sm">
-                                    <FileSpreadsheet size={14} /> Excel
-                                </button>
-                                <button onClick={downloadPDF} disabled={isGeneratingPDF} className="flex items-center gap-1 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 shadow-sm disabled:opacity-50">
-                                    {isGeneratingPDF ? <span className="animate-spin">⏳</span> : <Download size={14} />} PDF
-                                </button>
+                                <button onClick={exportToExcel} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 shadow-sm"><FileSpreadsheet size={14} /> Excel</button>
+                                <button onClick={downloadPDF} disabled={isGeneratingPDF} className="flex items-center gap-1 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 shadow-sm disabled:opacity-50">{isGeneratingPDF ? <span className="animate-spin">⏳</span> : <Download size={14} />} PDF</button>
                             </div>
                         </div>
 
-                        {/* Render Groups */}
                         <div className="space-y-4">
                             {groupedHistory.map(group => (
                                 <div key={group.groupId} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                                    {/* Group Header */}
                                     <div className="bg-gray-50 p-4 border-b border-gray-100 flex justify-between items-start">
                                         <div className="flex gap-3">
                                             <div className={`p-2 rounded-lg h-fit ${group.type === 'REQUEST_OUT' ? 'bg-purple-100 text-purple-600' : 'bg-orange-100 text-orange-600'}`}>
@@ -1215,112 +1263,99 @@
                                                     <span className="text-xs bg-white border px-1.5 rounded text-gray-500">{group.items.length} មុខ</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                                                    <Calendar size={12} /> {formatDate(group.date)}
-                                                    <span>•</span>
-                                                    <span>{group.reason}</span>
+                                                    <Calendar size={12} /> {formatDate(group.date)} <span>•</span> <span>{group.reason}</span>
                                                 </div>
                                             </div>
                                         </div>
-
-                                        {/* Group Actions (Edit & Delete) */}
                                         <div className="flex gap-1">
-                                            <button
-                                                onClick={() => setEditingGroup({
-                                                    ...group,
-                                                    newDate: group.date,
-                                                    items: JSON.parse(JSON.stringify(group.items)),
-                                                    deletedIds: []
-                                                })}
-                                                className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg transition-colors"
-                                                title="កែប្រែ"
-                                            >
-                                                <Edit size={18} />
-                                            </button>
-                                            
-                                            {/* ADDED: Group Delete Button */}
-                                            <button
-                                                onClick={() => handleDeleteGroup(group)}
-                                                className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"
-                                                title="លុបទាំងក្រុម"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
+                                            <button onClick={() => setEditingGroup({
+                                                ...group, newDate: group.date, newReason: group.reason,
+                                                items: JSON.parse(JSON.stringify(group.items)), deletedIds: []
+                                            })} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg transition-colors"><Edit size={18} /></button>
+                                            <button onClick={() => handleDeleteGroup(group)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"><Trash2 size={18} /></button>
                                         </div>
                                     </div>
-
-                                    {/* Group Items List */}
                                     <div className="divide-y divide-gray-50">
                                         {group.items.map(item => (
                                             <div key={item.id} className="p-3 flex justify-between items-center pl-16 hover:bg-gray-50">
                                                 <div className="text-sm font-medium text-gray-700">{item.itemName} <span className="text-xs font-normal text-gray-400">({item.category})</span></div>
-                                                <div className="flex items-center gap-4">
-                                                    <span className="font-bold text-red-600 text-sm">-{item.quantity}</span>
-                                                    {/* Individual Delete Button */}
-                                                    <button 
-                                                        onClick={() => handleDeleteHistory(item)}
-                                                        className="text-gray-300 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-all"
-                                                        title="លុបមួយមុខនេះ"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
+                                                <div className="flex items-center gap-4"><span className="font-bold text-red-600 text-sm">-{item.quantity}</span></div>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
                             ))}
-
-                            {groupedHistory.length === 0 && (
-                                <div className="text-center py-10 text-gray-400">
-                                    <History size={40} className="mx-auto mb-2 opacity-20" />
-                                    <p>មិនទាន់មានប្រវត្តិ</p>
-                                </div>
-                            )}
                         </div>
 
-                        {/* --- Batch Edit Modal --- */}
+                        {/* --- BATCH EDIT MODAL (Full Features) --- */}
                         {editingGroup && (
                             <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
-                                <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-popIn flex flex-col max-h-[90vh]">
+                                <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-popIn flex flex-col max-h-[90vh]">
                                     <div className="bg-blue-600 p-4 flex justify-between items-center text-white shrink-0">
                                         <h3 className="font-bold text-lg flex items-center gap-2"><Edit size={20} /> កែប្រែរួម (Batch Edit)</h3>
-                                        <button onClick={() => setEditingGroup(null)} className="hover:bg-blue-700 p-1 rounded transition-colors"><X size={24} /></button>
+                                        <button onClick={() => {setEditingGroup(null); setNewItemToAdd({itemId:'', quantity:''})}} className="hover:bg-blue-700 p-1 rounded transition-colors"><X size={24} /></button>
                                     </div>
+
                                     <div className="p-5 overflow-y-auto custom-scrollbar">
                                         <form onSubmit={handleBatchUpdate}>
-                                            <div className="mb-6">
-                                                <label className="block text-sm font-bold text-gray-700 mb-2">កាលបរិច្ឆេទ & ម៉ោង (ថ្មី)</label>
-                                                <div className="relative">
-                                                    <input type="datetime-local" className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50 text-gray-800 font-medium"
-                                                        value={(() => {
-                                                            const date = new Date(editingGroup.newDate);
-                                                            const offset = date.getTimezoneOffset() * 60000;
-                                                            return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-                                                        })()}
+                                            <div className="grid grid-cols-1 gap-4 mb-4">
+                                                <div>
+                                                    <label className="block text-sm font-bold text-gray-700 mb-1">កាលបរិច្ឆេទ & ម៉ោង</label>
+                                                    <input type="datetime-local" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                                        value={(() => { const d = new Date(editingGroup.newDate); const off = d.getTimezoneOffset()*60000; return new Date(d.getTime()-off).toISOString().slice(0,16); })()}
                                                         onChange={(e) => setEditingGroup({ ...editingGroup, newDate: e.target.value })} required />
-                                                    <Calendar className="absolute left-3 top-3.5 text-gray-500" size={18} />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-bold text-gray-700 mb-1">មូលហេតុ/យកទៅណា</label>
+                                                    <input type="text" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                                        value={editingGroup.newReason}
+                                                        onChange={(e) => setEditingGroup({ ...editingGroup, newReason: e.target.value })} required />
                                                 </div>
                                             </div>
+
+                                            {/* ADD NEW ITEM SECTION */}
+                                            <div className="bg-green-50 p-3 rounded-lg border border-green-100 mb-4">
+                                                <label className="block text-sm font-bold text-green-800 mb-2">➕ បន្ថែមសម្ភារៈថ្មីចូលក្រុមនេះ</label>
+                                                <div className="flex gap-2">
+                                                    <div className="flex-1">
+                                                        <Select label="" value={newItemToAdd.itemId} 
+                                                            onChange={(e) => setNewItemToAdd({...newItemToAdd, itemId: e.target.value})}
+                                                            options={availableItemsForAdd} 
+                                                        />
+                                                    </div>
+                                                    <div className="w-20">
+                                                        <input type="number" placeholder="Qty" className="w-full px-2 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
+                                                            value={newItemToAdd.quantity} onChange={(e) => setNewItemToAdd({...newItemToAdd, quantity: e.target.value})} />
+                                                    </div>
+                                                    <button type="button" onClick={handleAddItemToBatch} className="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 font-bold">Add</button>
+                                                </div>
+                                            </div>
+
+                                            {/* ITEMS LIST */}
                                             <div className="mb-4">
                                                 <label className="block text-sm font-bold text-gray-700 mb-2">បញ្ជីសម្ភារៈ ({editingGroup.items.length})</label>
-                                                <div className="space-y-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                                <div className="space-y-2 bg-gray-50 p-3 rounded-xl border border-gray-100 max-h-60 overflow-y-auto custom-scrollbar">
                                                     {editingGroup.items.map((item, index) => (
-                                                        <div key={item.id} className="flex items-center justify-between bg-white p-2.5 rounded-lg shadow-sm border border-gray-200">
+                                                        <div key={item.id} className={`flex items-center justify-between p-2.5 rounded-lg shadow-sm border ${item.isNew ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
                                                             <div className="flex-1 min-w-0 pr-3">
-                                                                <div className="font-bold text-gray-800 truncate text-sm">{item.itemName}</div>
+                                                                <div className="font-bold text-gray-800 truncate text-sm">
+                                                                    {item.isNew && <span className="text-green-600 text-xs mr-1">[New]</span>}
+                                                                    {item.itemName}
+                                                                </div>
                                                                 <div className="text-xs text-gray-500">{item.category}</div>
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 <div className="w-20"><input type="number" min="1" value={item.quantity} onChange={(e) => handleChangeBatchQty(index, e.target.value)} className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-center font-bold text-blue-600 focus:ring-2 focus:ring-blue-500 outline-none text-sm" /></div>
-                                                                <button type="button" onClick={() => handleRemoveFromBatch(index)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="លុបចេញ"><Trash2 size={18} /></button>
+                                                                <button type="button" onClick={() => handleRemoveFromBatch(index)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18} /></button>
                                                             </div>
                                                         </div>
                                                     ))}
-                                                    {editingGroup.items.length === 0 && (<div className="text-center text-red-500 text-sm py-2">បានលុបទាំងអស់</div>)}
+                                                    {editingGroup.items.length === 0 && <div className="text-center text-red-500 text-sm py-2">បានលុបទាំងអស់</div>}
                                                 </div>
                                             </div>
-                                            <div className="flex gap-3 mt-6 pt-4 border-t border-gray-100">
-                                                <Button onClick={() => setEditingGroup(null)} variant="secondary" className="flex-1">បោះបង់</Button>
+
+                                            <div className="flex gap-3 pt-2 border-t border-gray-100">
+                                                <Button onClick={() => {setEditingGroup(null); setNewItemToAdd({itemId:'', quantity:''})}} variant="secondary" className="flex-1">បោះបង់</Button>
                                                 <Button type="submit" variant="success" className="flex-1 shadow-green-200">រក្សាទុកការកែប្រែ</Button>
                                             </div>
                                         </form>
