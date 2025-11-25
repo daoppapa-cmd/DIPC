@@ -1779,6 +1779,7 @@
                 );
             };
 
+            // --- UPDATED OPERATIONS VIEW ---
             const OperationsView = () => {
                 const [mode, setMode] = useState('in');
                 const [formData, setFormData] = useState({
@@ -1791,23 +1792,19 @@
                 const [requesterName, setRequesterName] = useState('');
                 const [generalReason, setGeneralReason] = useState('');
 
+                // Personnel State
                 const [personnel, setPersonnel] = useState([]);
                 const [personSearch, setPersonSearch] = useState('');
                 const [showDropdown, setShowDropdown] = useState(false);
                 const [selectedPerson, setSelectedPerson] = useState(null);
 
+                // Load User Data
                 useEffect(() => {
                     const initUserAppAuth = async () => {
-                        try {
-                            await signInAnonymously(userAuth);
-                        } catch (e) {
-                             console.log("User List App: Public Mode (Auth skipped or failed - check console for details if needed)");
-                        }
+                        try { await signInAnonymously(userAuth); } catch (e) { console.log("User App Auth Skipped"); }
                     };
                     initUserAppAuth();
-
                     const usersRef = ref(userDb, 'students'); 
-                    
                     onValue(usersRef, (snapshot) => {
                         const data = snapshot.val();
                         const loadedPeople = [];
@@ -1821,8 +1818,6 @@
                             }
                         }
                         setPersonnel(loadedPeople);
-                    }, (error) => {
-                        console.error("User DB Error:", error);
                     });
                 }, []);
 
@@ -1857,10 +1852,29 @@
                     setPersonSearch('');
                 };
 
-                // Prepare combined list for Stock Out dropdown
+                // --- LOGIC ថ្មីសម្រាប់បង្កើតបញ្ជី Dropdown ---
                 const combinedItems = [
-                    ...items.map(i => ({ ...i, source: 'inventory_items', displayName: i.name })),
-                    ...totalData.map(i => ({ ...i, source: 'inventory', displayName: i.type, category: 'General', name: i.type })) 
+                    // 1. សម្ភារៈក្នុងស្តុកផ្ទាល់ (Inventory Items)
+                    ...items.map(i => ({ 
+                        ...i, 
+                        source: 'inventory_items', 
+                        displayName: i.name,
+                        // Label: Case (សល់: 50)
+                        selectLabel: `${i.name} (សល់: ${i.quantity})`
+                    })),
+                    
+                    // 2. ទិន្នន័យសរុប (Total Data /inventory)
+                    ...totalData
+                        .filter(i => i.status !== 'ខូច') // --- FILTER: មិនយករបស់ "ខូច" ---
+                        .map(i => ({ 
+                            ...i, 
+                            source: 'inventory', 
+                            displayName: i.type, 
+                            category: 'General', 
+                            name: i.type,
+                            // Label: Case (សល់: 1000 _ទំនេរ)
+                            selectLabel: `${i.type} (សល់: ${i.quantity} _${i.status || 'N/A'})`
+                        })) 
                 ];
 
                 const addToCart = () => {
@@ -1869,7 +1883,6 @@
                         return;
                     }
                     
-                    // Find in combined list
                     const item = combinedItems.find(i => i.id === currentStockOut.itemId);
                     const qty = parseInt(currentStockOut.quantity);
 
@@ -1884,7 +1897,7 @@
                         const newCart = [...stockOutCart];
                         const newQty = parseInt(newCart[existingIndex].outQty) + qty;
                         if (newQty > item.quantity) {
-                            showNotification(`ចំនួនសរុបក្នុងបញ្ជីលើសពីស្តុក (សល់: ${item.quantity})`, 'error');
+                            showNotification(`ចំនួនសរុបលើសពីស្តុក`, 'error');
                             return;
                         }
                         newCart[existingIndex].outQty = newQty;
@@ -1907,24 +1920,9 @@
                     <h2 className="text-xl font-bold text-gray-800 mb-4">ប្រតិបត្តិការ</h2>
                     
                     <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
-                    <button 
-                        onClick={() => { setMode('in'); resetForm(); }}
-                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'in' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
-                    >
-                        បញ្ចូលស្តុក
-                    </button>
-                    <button 
-                        onClick={() => { setMode('out'); resetForm(); }}
-                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'out' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}
-                    >
-                        ដកចេញ
-                    </button>
-                    <button 
-                        onClick={() => { setMode('request'); resetForm(); }}
-                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}
-                    >
-                        សំណើ
-                    </button>
+                    <button onClick={() => { setMode('in'); resetForm(); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'in' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>បញ្ចូលស្តុក</button>
+                    <button onClick={() => { setMode('out'); resetForm(); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'out' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}>ដកចេញ</button>
+                    <button onClick={() => { setMode('request'); resetForm(); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}>សំណើ</button>
                     </div>
 
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
@@ -1936,32 +1934,15 @@
                         <Input label="ឈ្មោះសម្ភារៈ" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                         
                         <div className="grid grid-cols-2 gap-4">
-                            <Select 
-                            label="ប្រភេទ" 
-                            value={formData.category} 
-                            onChange={e => setFormData({...formData, category: e.target.value})}
-                            options={[
-                                {label: "Computer", value: "Computer"},
-                                {label: "Accessory", value: "Accessory"},
-                                {label: "Network", value: "Network"},
-                                {label: "Printer", value: "Printer"},
-                                {label: "Other", value: "Other"}
-                            ]}
-                            />
-                            <Select 
-                                label="ទីតាំង" 
-                                required
-                                value={formData.cabinetNo} 
-                                onChange={e => setFormData({...formData, cabinetNo: e.target.value})}
-                                options={LOCATION_OPTIONS}
-                            />
+                            <Select label="ប្រភេទ" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}
+                            options={[{label: "Computer", value: "Computer"}, {label: "Accessory", value: "Accessory"}, {label: "Network", value: "Network"}, {label: "Printer", value: "Printer"}, {label: "Other", value: "Other"}]} />
+                            <Select label="ទីតាំង" required value={formData.cabinetNo} onChange={e => setFormData({...formData, cabinetNo: e.target.value})} options={LOCATION_OPTIONS} />
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                             <Input label="ចំនួន" type="number" required value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} />
                             <Input label="ខ្នាត (Unit)" placeholder="PCS, Set, Box..." value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})} />
                         </div>
                         <Input label="ផ្សេងៗ" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
-                        
                         <Button type="submit" variant="primary" className="w-full mt-4">រក្សាទុក</Button>
                         </form>
                     )}
@@ -1972,13 +1953,7 @@
                                 <PackageMinus size={20}/> ដកសម្ភារៈចេញ (ច្រើនមុខ)
                             </h3>
                             
-                            <Input 
-                                label="ឈ្មោះអ្នកស្នើសុំ / ឈ្មោះអ្នកដក" 
-                                required 
-                                value={requesterName} 
-                                onChange={e => setRequesterName(e.target.value)}
-                                placeholder="ឈ្មោះអ្នកដក..."
-                            />
+                            <Input label="ឈ្មោះអ្នកស្នើសុំ / ឈ្មោះអ្នកដក" required value={requesterName} onChange={e => setRequesterName(e.target.value)} placeholder="ឈ្មោះអ្នកដក..." />
 
                             <div className="bg-gray-50 p-4 rounded-xl mb-4 border border-gray-100">
                                 <h4 className="text-sm font-bold text-gray-700 mb-3">បន្ថែមសម្ភារៈចូលបញ្ជី</h4>
@@ -1988,16 +1963,12 @@
                                             label="ជ្រើសរើសសម្ភារៈ" 
                                             value={currentStockOut.itemId} 
                                             onChange={e => setCurrentStockOut({...currentStockOut, itemId: e.target.value})}
-                                            options={combinedItems.map(i => ({ label: `${i.displayName} (សល់: ${i.quantity})`, value: i.id }))}
+                                            // --- UPDATED OPTIONS WITH STATUS ---
+                                            options={combinedItems.map(i => ({ label: i.selectLabel, value: i.id }))}
                                         />
                                     </div>
                                     <div className="w-24">
-                                        <Input 
-                                            label="ចំនួន" 
-                                            type="number" 
-                                            value={currentStockOut.quantity} 
-                                            onChange={e => setCurrentStockOut({...currentStockOut, quantity: e.target.value})} 
-                                        />
+                                        <Input label="ចំនួន" type="number" value={currentStockOut.quantity} onChange={e => setCurrentStockOut({...currentStockOut, quantity: e.target.value})} />
                                     </div>
                                 </div>
                                 <Button onClick={addToCart} variant="secondary" className="w-full py-2 text-sm">
@@ -2012,7 +1983,11 @@
                                     <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar border rounded-lg p-2">
                                         {stockOutCart.map((item, index) => (
                                             <div key={index} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-sm">
-                                                <span>{item.name}</span>
+                                                <div>
+                                                    <span className="font-medium">{item.name}</span>
+                                                    {/* Show Source/Status in Cart too if needed */}
+                                                    {item.source === 'inventory' && <span className="text-xs text-gray-500 ml-2">({item.status})</span>}
+                                                </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="font-bold text-orange-600">x{item.outQty}</span>
                                                     <button onClick={() => removeFromCart(index)} className="text-red-500 hover:bg-red-50 p-1 rounded">
@@ -2025,12 +2000,7 @@
                                 </div>
                             )}
 
-                            <Input 
-                                label="មូលហេតុ/យកទៅណា" 
-                                required 
-                                value={generalReason} 
-                                onChange={e => setGeneralReason(e.target.value)} 
-                            />
+                            <Input label="មូលហេតុ/យកទៅណា" required value={generalReason} onChange={e => setGeneralReason(e.target.value)} />
                             
                             <Button 
                                 onClick={() => handleStockOut(stockOutCart, requesterName, generalReason, resetForm)}
@@ -2044,116 +2014,58 @@
 
                     {mode === 'request' && (
                         <form onSubmit={(e) => handleRequest(e, formData, resetForm)}>
-                        <h3 className="text-lg font-bold text-purple-600 mb-4 flex items-center gap-2">
-                            <ClipboardList size={20}/> បញ្ចូលទិន្នន័យសំណើ
-                        </h3>
+                        <h3 className="text-lg font-bold text-purple-600 mb-4 flex items-center gap-2"><ClipboardList size={20}/> បញ្ចូលទិន្នន័យសំណើ</h3>
                         
-                        {/* --- Requester Search Box --- */}
+                        {/* Requester Search */}
                         <div className="mb-4 relative">
                             <label className="block text-sm font-medium text-gray-700 mb-1">ឈ្មោះអ្នកស្នើសុំ (ស្វែងរកតាម ឈ្មោះ/អត្តលេខ)</label>
                             <div className="relative">
-                                <input
-                                    type="text"
-                                    value={personSearch}
-                                    onChange={(e) => {
-                                        setPersonSearch(e.target.value);
-                                        setShowDropdown(true);
-                                        if(e.target.value === '') setSelectedPerson(null);
-                                    }}
-                                    onFocus={() => setShowDropdown(true)}
-                                    placeholder="វាយឈ្មោះ ឬ អត្តលេខ..."
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none pl-10"
-                                    required
-                                />
+                                <input type="text" value={personSearch} required
+                                    onChange={(e) => { setPersonSearch(e.target.value); setShowDropdown(true); if(e.target.value === '') setSelectedPerson(null); }}
+                                    onFocus={() => setShowDropdown(true)} placeholder="វាយឈ្មោះ ឬ អត្តលេខ..."
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none pl-10" />
                                 <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                                {personSearch && (
-                                    <button 
-                                        type="button" 
-                                        onClick={() => {setPersonSearch(''); setSelectedPerson(null); setFormData(p=>({...p, requester: ''}))}}
-                                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
-                                    >
-                                        <X size={18}/>
-                                    </button>
-                                )}
+                                {personSearch && ( <button type="button" onClick={() => {setPersonSearch(''); setSelectedPerson(null); setFormData(p=>({...p, requester: ''}))}} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"><X size={18}/></button> )}
                             </div>
 
-                            {/* Search Dropdown */}
+                            {/* Dropdown */}
                             {showDropdown && personSearch && filteredPersonnel.length > 0 && (
                                 <div className="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-60 overflow-y-auto custom-scrollbar">
-                                    {filteredPersonnel.map((person, idx) => {
-                                        const pName = person.Name || person.name || person['ឈ្មោះ'] || 'N/A';
-                                        const pId = person.ID || person.id || person['អត្តលេខ'] || 'N/A';
-                                        const pImg = person.Photo || person.photo || person['រូបថត'];
-
-                                        return (
-                                            <div 
-                                                key={idx} 
-                                                onClick={() => handleSelectPerson(person)}
-                                                className="p-3 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-3"
-                                            >
-                                                <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden flex-shrink-0">
-                                                    {pImg ? (
-                                                        <img src={pImg} alt="Avatar" className="w-full h-full object-cover"/>
-                                                    ) : (
-                                                        <User className="w-full h-full p-1 text-gray-400"/>
-                                                    )}
-                                                </div>
-                                                <div>
-                                                    <div className="font-bold text-sm text-gray-800">{pName}</div>
-                                                    <div className="text-xs text-gray-500">ID: {pId}</div>
-                                                </div>
+                                    {filteredPersonnel.map((person, idx) => (
+                                        <div key={idx} onClick={() => handleSelectPerson(person)} className="p-3 hover:bg-purple-50 cursor-pointer border-b border-gray-100 flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden shrink-0">
+                                                {(person.Photo || person.photo || person['រូបថត']) ? <img src={person.Photo || person.photo || person['រូបថត']} className="w-full h-full object-cover"/> : <User className="w-full h-full p-1 text-gray-400"/>}
                                             </div>
-                                        );
-                                    })}
+                                            <div>
+                                                <div className="font-bold text-sm text-gray-800">{person.Name || person.name || person['ឈ្មោះ']}</div>
+                                                <div className="text-xs text-gray-500">ID: {person.ID || person.id || person['អត្តលេខ']}</div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>
 
-                        {/* --- Selected Person Card Info --- */}
                         {selectedPerson && (
                             <div className="bg-purple-50 border border-purple-100 rounded-lg p-4 mb-4 flex gap-4 items-start animate-fadeIn">
-                                <div className="w-16 h-16 rounded-full bg-gray-200 overflow-hidden shadow-sm flex-shrink-0 border-2 border-white">
-                                    {(selectedPerson.Photo || selectedPerson.photo || selectedPerson['រូបថត']) ? (
-                                        <img src={selectedPerson.Photo || selectedPerson.photo || selectedPerson['រូបថត']} alt="Profile" className="w-full h-full object-cover"/>
-                                    ) : (
-                                        <User className="w-full h-full p-3 text-gray-400"/>
-                                    )}
+                                <div className="w-16 h-16 rounded-full bg-gray-200 overflow-hidden shadow-sm shrink-0 border-2 border-white">
+                                    {(selectedPerson.Photo || selectedPerson.photo || selectedPerson['រូបថត']) ? <img src={selectedPerson.Photo || selectedPerson.photo || selectedPerson['រូបថត']} className="w-full h-full object-cover"/> : <User className="w-full h-full p-3 text-gray-400"/>}
                                 </div>
                                 <div className="flex-1 space-y-1">
                                     <h4 className="font-bold text-purple-900 text-lg">{selectedPerson.Name || selectedPerson.name || selectedPerson['ឈ្មោះ']}</h4>
-                                    
-                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                                        <div className="flex items-center gap-1 text-gray-600">
-                                            <CreditCard size={12}/>
-                                            <span>ID: <b>{selectedPerson.ID || selectedPerson.id || selectedPerson['អត្តលេខ']}</b></span>
-                                        </div>
-                                        <div className="flex items-center gap-1 text-gray-600">
-                                            <Briefcase size={12}/>
-                                            <span>ថ្នាក់: <b>{selectedPerson.Rank || selectedPerson.rank || selectedPerson['ថ្នាក់'] || '-'}</b></span>
-                                        </div>
-                                        <div className="flex items-center gap-1 text-gray-600">
-                                            <Users size={12}/>
-                                            <span>ក្រុម: <b>{selectedPerson.Group || selectedPerson.group || selectedPerson['ក្រុម'] || '-'}</b></span>
-                                        </div>
-                                        <div className="flex items-center gap-1 text-gray-600">
-                                            <LayoutDashboard size={12}/>
-                                            <span>ផ្នែក: <b>{selectedPerson.Section || selectedPerson.section || selectedPerson['ផ្នែកការងារ'] || '-'}</b></span>
-                                        </div>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
+                                        <div className="flex items-center gap-1"><CreditCard size={12}/> ID: <b>{selectedPerson.ID || selectedPerson.id || selectedPerson['អត្តលេខ']}</b></div>
+                                        <div className="flex items-center gap-1"><Briefcase size={12}/> ថ្នាក់: <b>{selectedPerson.Rank || selectedPerson.rank || selectedPerson['ថ្នាក់'] || '-'}</b></div>
+                                        <div className="flex items-center gap-1"><Users size={12}/> ក្រុម: <b>{selectedPerson.Group || selectedPerson.group || selectedPerson['ក្រុម'] || '-'}</b></div>
+                                        <div className="flex items-center gap-1"><LayoutDashboard size={12}/> ផ្នែក: <b>{selectedPerson.Section || selectedPerson.section || selectedPerson['ផ្នែកការងារ'] || '-'}</b></div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        <Select 
-                            label="ឈ្មោះសម្ភារៈ" 
-                            required
-                            value={formData.itemId} 
-                            onChange={e => setFormData({...formData, itemId: e.target.value})}
-                            options={items.map(i => ({ label: `${i.name} (សល់: ${i.quantity})`, value: i.id }))}
-                        />
+                        <Select label="ឈ្មោះសម្ភារៈ" required value={formData.itemId} onChange={e => setFormData({...formData, itemId: e.target.value})} options={items.map(i => ({ label: `${i.name} (សល់: ${i.quantity})`, value: i.id }))} />
                         <Input label="ចំនួនស្នើសុំ" type="number" required value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} />
                         <Input label="មូលហេតុ" required value={formData.reason} onChange={e => setFormData({...formData, reason: e.target.value})} />
-                        
                         <Button type="submit" className="w-full mt-4 bg-purple-600 hover:bg-purple-700">បញ្ជូនសំណើ</Button>
                         </form>
                     )}
