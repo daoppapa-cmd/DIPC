@@ -1785,6 +1785,7 @@
             };
 
             // --- UPDATED OPERATIONS VIEW ---
+        // --- UPDATED OPERATIONS VIEW (កែសម្រួលបន្ថែមទីតាំង) ---
             const OperationsView = () => {
                 const [mode, setMode] = useState('in');
                 const [formData, setFormData] = useState({
@@ -1857,27 +1858,27 @@
                     setPersonSearch('');
                 };
 
-                // --- LOGIC ថ្មីសម្រាប់បង្កើតបញ្ជី Dropdown ---
+                // --- LOGIC ថ្មីសម្រាប់បង្កើតបញ្ជី Dropdown (មានបង្ហាញទីតាំង) ---
                 const combinedItems = [
                     // 1. សម្ភារៈក្នុងស្តុកផ្ទាល់ (Inventory Items)
                     ...items.map(i => ({ 
                         ...i, 
                         source: 'inventory_items', 
                         displayName: i.name,
-                        // Label: Case (សល់: 50)
-                        selectLabel: `${i.name} (សល់: ${i.quantity})`
+                        // ===> កែប្រែត្រង់នេះ៖ បន្ថែមទីតាំងនៅខាងក្រោយ <===
+                        selectLabel: `${i.name} (សល់: ${i.quantity} _${getLocationLabel(i.cabinetNo)})`
                     })),
                     
                     // 2. ទិន្នន័យសរុប (Total Data /inventory)
                     ...totalData
-                        .filter(i => i.status !== 'ខូច') // --- FILTER: មិនយករបស់ "ខូច" ---
+                        .filter(i => i.status !== 'ខូច') 
                         .map(i => ({ 
                             ...i, 
                             source: 'inventory', 
                             displayName: i.type, 
                             category: 'General', 
                             name: i.type,
-                            // Label: Case (សល់: 1000 _ទំនេរ)
+                            // សម្រាប់ទិន្នន័យពី /inventory បង្ហាញ Status ជំនួសទីតាំង (ឬតាមចិត្តអ្នក)
                             selectLabel: `${i.type} (សល់: ${i.quantity} _${i.status || 'N/A'})`
                         })) 
                 ];
@@ -1968,7 +1969,7 @@
                                             label="ជ្រើសរើសសម្ភារៈ" 
                                             value={currentStockOut.itemId} 
                                             onChange={e => setCurrentStockOut({...currentStockOut, itemId: e.target.value})}
-                                            // --- UPDATED OPTIONS WITH STATUS ---
+                                            // ប្រើ combinedItems ដែលមានបង្ហាញទីតាំង
                                             options={combinedItems.map(i => ({ label: i.selectLabel, value: i.id }))}
                                         />
                                     </div>
@@ -1990,8 +1991,9 @@
                                             <div key={index} className="flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-sm">
                                                 <div>
                                                     <span className="font-medium">{item.name}</span>
-                                                    {/* Show Source/Status in Cart too if needed */}
                                                     {item.source === 'inventory' && <span className="text-xs text-gray-500 ml-2">({item.status})</span>}
+                                                    {/* បង្ហាញទីតាំងក្នុងបញ្ជីដកផងដែរ បើជា Local Item */}
+                                                    {item.source === 'inventory_items' && <span className="text-xs text-gray-500 ml-2">({getLocationLabel(item.cabinetNo)})</span>}
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="font-bold text-orange-600">x{item.outQty}</span>
@@ -2068,7 +2070,18 @@
                             </div>
                         )}
 
-                        <Select label="ឈ្មោះសម្ភារៈ" required value={formData.itemId} onChange={e => setFormData({...formData, itemId: e.target.value})} options={items.map(i => ({ label: `${i.name} (សល់: ${i.quantity})`, value: i.id }))} />
+                        {/* ===> កែប្រែត្រង់នេះ៖ Dropdown សម្រាប់សំណើក៏បង្ហាញទីតាំងដែរ <=== */}
+                        <Select 
+                            label="ឈ្មោះសម្ភារៈ" 
+                            required 
+                            value={formData.itemId} 
+                            onChange={e => setFormData({...formData, itemId: e.target.value})} 
+                            options={items.map(i => ({ 
+                                label: `${i.name} (សល់: ${i.quantity} _${getLocationLabel(i.cabinetNo)})`, 
+                                value: i.id 
+                            }))} 
+                        />
+
                         <Input label="ចំនួនស្នើសុំ" type="number" required value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} />
                         <Input label="មូលហេតុ" required value={formData.reason} onChange={e => setFormData({...formData, reason: e.target.value})} />
                         <Button type="submit" className="w-full mt-4 bg-purple-600 hover:bg-purple-700">បញ្ជូនសំណើ</Button>
